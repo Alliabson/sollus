@@ -371,7 +371,16 @@ with tab2:
         
         # --- ATUALIZAÇÃO: Usa 'valorParcela' como a coluna de valor principal
         df_receber['Valor'] = pd.to_numeric(df_receber['valorParcela'])
-        df_receber['Cliente'] = df_receber['cliente.nomeRazaoSocial']
+        
+        # --- CORREÇÃO (KeyError: 'cliente.nomeRazaoSocial') ---
+        # Verifica se a coluna foi criada pelo json_normalize antes de a aceder
+        if 'cliente.nomeRazaoSocial' in df_receber.columns:
+            df_receber['Cliente'] = df_receber['cliente.nomeRazaoSocial']
+        else:
+            # Se a coluna não existir (ex: API retornou dados sem cliente),
+            # cria uma coluna 'Cliente' com um valor padrão.
+            df_receber['Cliente'] = "Cliente não informado"
+        # --- FIM DA CORREÇÃO ---
 
         # --- KPIs (Métricas) ---
         st.divider()
