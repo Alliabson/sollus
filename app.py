@@ -191,31 +191,6 @@ def load_data(api_token):
         st.error(f"Erro ao processar os dados: {e}")
         return None, None
 
-# --- INÍCIO: FUNÇÃO ADICIONADA PARA BOLETOS ---
-@st.cache_data(ttl=600) # Cache de 10 minutos
-def load_boletos(api_token):
-    """
-    Carrega dados da API de boletos.
-    """
-    try:
-        headers = {"Authorization": f"Bearer {api_token}"}
-        # --- CORREÇÃO (400 BAD REQUEST) ---
-        # Removido o parâmetro "?DesabilitarPaginacao=true" que estava causando o erro
-        url_boletos = "https://api.flow2.com.br/v1/boletos"
-        response = requests.get(url_boletos, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        return data
-
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao carregar dados da API de Boletos: {e}")
-        return None
-    except Exception as e:
-        st.error(f"Erro ao processar os dados de Boletos: {e}")
-        return None
-# --- FIM: FUNÇÃO ADICIONADA PARA BOLETOS ---
-
-
 # --- Início da Interface ---
 
 st.title("CONTROLE BANCÁRIO | Departamento Financeiro")
@@ -396,36 +371,3 @@ with table2:
         hide_index=True,
         height=400 # Mesma altura da outra tabela
     )
-
-# --- INÍCIO: SEÇÃO ADICIONADA PARA TESTE DE BOLETOS ---
-st.divider()
-st.title("Tabela Exemplo (v1/boletos)")
-st.warning("Esta é uma seção de teste temporária.")
-st.info("Por favor, olhe os dados abaixo e me diga quais colunas correspondem a: \n 1. Data de Vencimento \n 2. Valor do Boleto \n 3. Status (ex: 'ABERTO', 'PAGO')")
-
-# Carrega os dados dos boletos
-data_boletos = load_boletos(api_token)
-
-if data_boletos:
-    st.subheader("Dados Brutos da API (para depuração)")
-    st.json(data_boletos)
-
-    st.subheader("DataFrame Normalizado (Tentativa)")
-    st.info("Estou assumindo que os dados estão em uma chave 'itens', como na API de movimentos. Se a tabela abaixo estiver vazia ou errada, os dados brutos acima nos ajudarão a corrigir.")
-
-    try:
-        # Tenta normalizar com 'itens' (comum em APIs paginadas)
-        df_boletos = pd.json_normalize(data_boletos, record_path=['itens'])
-        st.dataframe(df_boletos, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Falha ao normalizar com 'itens': {e}")
-        st.info("Tentando normalizar a raiz do JSON (se não for paginado)...")
-        try:
-            # Tenta normalizar a raiz (se a API retornar uma lista simples de objetos)
-            df_boletos_root = pd.json_normalize(data_boletos)
-            st.dataframe(df_boletos_root, use_container_width=True)
-        except Exception as e2:
-            st.error(f"Falha ao normalizar a raiz também: {e2}")
-else:
-    st.error("Não foi possível carregar os dados dos boletos.")
-# --- FIM: SEÇÃO ADICIONADA PARA TESTE DE BOLETOS ---
