@@ -177,15 +177,25 @@ def load_boletos(api_token):
         headers = {"Authorization": f"Bearer {api_token}"}
         url_boletos = "https://api.flow2.com.br/v1/boletos?IdsReceber=0"
         response = requests.get(url_boletos, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        return data
+        response.raise_for_status() # Lança erro para 4xx/5xx
+
+        # --- CORREÇÃO (Erro "Expecting value...") ---
+        # Se a resposta for vazia, o .json() falha.
+        # Verificamos se há texto antes de tentar decodificar.
+        if not response.text:
+            return [] # Retorna uma lista vazia (JSON válido)
+            
+        return response.json()
 
     except requests.exceptions.RequestException as e:
         st.error(f"Erro ao carregar dados da API de Boletos: {e}")
         return None
+    except requests.exceptions.JSONDecodeError as e:
+        # Pega o erro "Expecting value..."
+        st.error(f"Erro ao decodificar JSON da API de Boletos: {e}. A API pode ter retornado uma resposta inesperada.")
+        return None
     except Exception as e:
-        st.error(f"Erro ao processar os dados de Boletos: {e}")
+        st.error(f"Erro inesperado ao carregar Boletos: {e}")
         return None
 
 # --- Início da Interface ---
@@ -200,7 +210,8 @@ except KeyError:
     st.stop()
 
 # --- CRIAÇÃO DAS ABAS ---
-tab1, tab2 = st.tabs(["🏦 Controle Bancário", "🧾 Boletos (em breve)"])
+# --- ATUALIZAÇÃO: Aba "Boletos" agora é funcional ---
+tab1, tab2 = st.tabs(["🏦 Controle Bancário", "🧾 Controle de Boletos"])
 
 # --- ABA 1: CONTROLE BANCÁRIO ---
 with tab1:
@@ -209,7 +220,7 @@ with tab1:
 
     if df_movimentos is None or df_saldos is None:
         st.error("Falha ao carregar dados. Verifique a API e o Token.")
-        st.stop()
+        st.stop() # Usamos st.stop() para parar a execução apenas desta aba
 
     st.subheader("Filtros")
     col1, col2 = st.columns([1, 2])
@@ -319,35 +330,132 @@ with tab1:
             height=400 # O st.dataframe já tem barra de rolagem nativa com 'height'
         )
 
-# --- ABA 2: CONTROLE DE BOLETOS ---
+# --- ABA 2: CONTROLE DE BOLETOS (FUNCIONAL) ---
 with tab2:
-    st.warning("Página em Construção!")
-    
     # Carrega os dados para esta aba
     data_boletos = load_boletos(api_token)
     
     if data_boletos is None:
         st.error("Falha ao carregar dados dos boletos. Verifique a API e o Token.")
+        st.stop() # Para a execução desta aba
+
+    if not data_boletos:
+        st.info("Nenhum boleto encontrado para os filtros selecionados.")
         st.stop()
 
-    st.info("Para que eu possa construir os filtros (Vencido, A Vencer, etc.), preciso saber os nomes das colunas. Por favor, olhe os dados abaixo e me diga quais colunas correspondem a: \n 1. Data de Vencimento \n 2. Valor do Boleto \n 3. Status (ex: 'ABERTO', 'PAGO')")
-
-    st.subheader("Dados Brutos da API (para depuração)")
-    st.json(data_boletos)
-
-    st.subheader("DataFrame Normalizado (Tentativa)")
-    st.info("Estou assumindo que os dados estão em uma chave 'itens', como na API de movimentos. Se a tabela abaixo estiver vazia ou errada, os dados brutos acima nos ajudarão a corrigir.")
-
     try:
-        # Tenta normalizar com 'itens' (comum em APIs paginadas)
-        df_boletos = pd.json_normalize(data_boletos, record_path=['itens'])
-        st.dataframe(df_boletos, use_container_width=True)
+        # Normaliza os dados. Baseado no seu JSON, a API retorna uma Lista.
+        df_boletos = pd.json_normalize(data_boletos)
+
+        # --- Transformação dos Dados (Baseado no JSON de exemplo) ---
+        hoje = pd.Timestamp.now().date()
+        
+        # Converte colunas de data (ignorando erros se já forem nulas)
+        df_boletos['dataVencimentoReal'] = pd.to_datetime(df_boletos['dataVencimentoReal'], errors='coerce').dt.date
+        df_boletos['dataBaixa'] = pd.to_datetime(df_boletos['dataBaixa'], errors='coerce').dt.date
+        
+        # Função para definir o status
+        def get_status(row):
+            if pd.notna(row['dataBaixa']):
+                return "Pago"
+            if pd.isna(row['dataVencimentoReal']):
+                return "Sem Vencimento"
+            if row['dataVencimentoReal'] < hoje:
+                return "Vencido"
+            if row['dataVencimentoReal'] == hoje:
+                return "Vence Hoje"
+            return "A Vencer"
+
+        df_boletos['Status'] = df_boletos.apply(get_status, axis=1)
+        df_boletos['Valor'] = pd.to_numeric(df_boletos['valor'])
+        df_boletos['Cliente'] = df_boletos['cliente.nomeRazaoSocial']
+
+        # --- KPIs (Métricas) ---
+        st.divider()
+        total_a_vencer = df_boletos[df_boletos['Status'].isin(['A Vencer', 'Vence Hoje'])]['Valor'].sum()
+        total_vencido = df_boletos[df_boletos['Status'] == 'Vencido']['Valor'].sum()
+        
+        # Calcula pagos apenas no mês atual para um KPI mais útil
+        mes_atual = hoje.month
+        ano_atual = hoje.year
+        pagos_mes = df_boletos[
+            (df_boletos['Status'] == 'Pago') &
+            (df_boletos['dataBaixa'].apply(lambda x: x.month == mes_atual if pd.notna(x) else False)) &
+            (df_boletos['dataBaixa'].apply(lambda x: x.year == ano_atual if pd.notna(x) else False))
+        ]['Valor'].sum()
+
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Total a Vencer (e Vence Hoje)", format_brl(total_a_vencer))
+        kpi2.metric("Total Vencido (não pago)", format_brl(total_vencido), delta_color="inverse")
+        kpi3.metric("Total Pago (Este Mês)", format_brl(pagos_mes))
+
+        # --- Filtros ---
+        st.divider()
+        st.subheader("Filtros de Boletos")
+        
+        col_f1, col_f2 = st.columns(2)
+        
+        with col_f1:
+            status_options = sorted(df_boletos['Status'].unique())
+            selected_status = st.multiselect(
+                "Status",
+                options=status_options,
+                default=status_options
+            )
+        
+        with col_f2:
+            min_venc = df_boletos['dataVencimentoReal'].min()
+            max_venc = df_boletos['dataVencimentoReal'].max()
+            
+            if pd.isna(min_venc) or pd.isna(max_venc):
+                min_venc, max_venc = hoje, hoje # Fallback
+                
+            venc_date_range = st.date_input(
+                "Período de Vencimento",
+                [min_venc, max_venc],
+                min_value=min_venc,
+                max_value=max_venc,
+                format="DD/MM/YYYY"
+            )
+
+        # --- Aplicação dos Filtros ---
+        if len(venc_date_range) == 2:
+            start_venc_filter = venc_date_range[0]
+            end_venc_filter = venc_date_range[1]
+        else:
+            start_venc_filter = min_venc
+            end_venc_filter = max_venc
+
+        df_boletos_filtered = df_boletos[
+            (df_boletos['Status'].isin(selected_status)) &
+            (df_boletos['dataVencimentoReal'] >= start_venc_filter) &
+            (df_boletos['dataVencimentoReal'] <= end_venc_filter)
+        ]
+
+        # --- Tabela de Boletos ---
+        st.subheader("Detalhe dos Boletos")
+        
+        df_boletos_display = df_boletos_filtered.copy()
+        
+        # Formatação para exibição
+        df_boletos_display['Valor'] = df_boletos_display['Valor'].apply(format_brl)
+        df_boletos_display['Vencimento'] = pd.to_datetime(df_boletos_display['dataVencimentoReal']).dt.strftime('%d/%m/%Y')
+        df_boletos_display['Pago em'] = pd.to_datetime(df_boletos_display['dataBaixa']).dt.strftime('%d/%m/%Y')
+        
+        # Limpa colunas que não são 'NaT'
+        df_boletos_display['Pago em'] = df_boletos_display['Pago em'].replace('NaT', '')
+
+        st.dataframe(
+            df_boletos_display[[
+                'Status', 'Vencimento', 'Cliente', 'Valor', 'Pago em', 'numero'
+            ]],
+            use_container_width=True,
+            hide_index=True,
+            height=500
+        )
+
     except Exception as e:
-        st.warning(f"Falha ao normalizar com 'itens': {e}")
-        st.info("Tentando normalizar a raiz do JSON (se não for paginado)...")
-        try:
-            # Tenta normalizar a raiz (se a API retornar uma lista simples de objetos)
-            df_boletos_root = pd.json_normalize(data_boletos)
-            st.dataframe(df_boletos_root, use_container_width=True)
-        except Exception as e2:
-            st.error(f"Falha ao normalizar a raiz também: {e2}")
+        st.error(f"Erro ao processar e exibir os dados dos boletos: {e}")
+        st.info("Verifique os 'Dados Brutos' para ajudar a depurar.")
+        st.subheader("Dados Brutos da API (para depuração)")
+        st.json(data_boletos)
