@@ -5,6 +5,7 @@ from datetime import datetime
 
 # Define a configuração da página
 # layout="wide" usa a tela inteira, como no seu BI desktop.
+# ISSO DEVE SER O PRIMEIRO COMANDO STREAMLIT
 st.set_page_config(layout="wide", page_title="Controle Bancário")
 
 # --- Estilização CSS Customizada ---
@@ -35,6 +36,13 @@ st.markdown("""
     [data-testid="stMetricValue"] {
         font-size: 2em;
         font-weight: bold;
+        /* --- CORREÇÃO DE COMPATIBILIDADE (NAVEGADORES) --- */
+        /* 1. Define cor explícita para evitar transparência/cor fraca */
+        color: #333333 !important; 
+        /* 2. Remove fundos estranhos (como o azul do seu print) */
+        background-color: transparent !important; 
+        /* 3. Impede a seleção de texto que causa o highlight */
+        user-select: none !important;
     }
     
     /* Cabeçalho das tabelas (DataFrames) */
@@ -75,6 +83,12 @@ st.markdown("""
     .block-container {
         padding-top: 2rem;
     }
+
+    /* Oculta o "Made with Streamlit" */
+    footer {visibility: hidden;}
+    /* Oculta o menu principal (hamburguer) */
+    #MainMenu {visibility: hidden;}
+
 </style>
 """, unsafe_allow_html=True)
 
