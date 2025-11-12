@@ -45,6 +45,32 @@ st.markdown("""
         color: #333333;
     }
 
+    /* --- INÍCIO DA CORREÇÃO 1: Restaurar CSS da Tabela HTML --- */
+    /* Estilos para a tabela de extratos HTML */
+    .extratos-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .extratos-table th {
+        background-color: #E8F5E9; /* Verde claro (do .stDataFrame th) */
+        font-size: 1.1em;
+        font-weight: bold;
+        color: #333333;
+        padding: 8px;
+        text-align: left;
+        border-bottom: 2px solid #4CAF50; /* Linha verde */
+    }
+    .extratos-table td {
+        padding: 8px;
+        border-bottom: 1px solid #DDDDDD; /* Linha cinza entre-linhas */
+        vertical-align: top;
+    }
+    /* Remove a borda da última linha */
+    .extratos-table tr:last-child td {
+        border-bottom: none;
+    }
+    /* --- FIM DA CORREÇÃO 1 --- */
+
     /* Remove o espaço extra no topo da página */
     .block-container {
         padding-top: 2rem;
@@ -83,6 +109,12 @@ def load_data(api_token):
             "operacao": "Operacao",
             "nomeBanco": "Banco"
         })
+        
+        # --- INÍCIO DA CORREÇÃO 2: Garantir que 'Operacao' é string ---
+        # Garante que a coluna 'Operacao' seja do tipo string para o filtro .str.contains()
+        if 'Operacao' in df_movimentos.columns:
+            df_movimentos['Operacao'] = df_movimentos['Operacao'].astype(str)
+        # --- FIM DA CORREÇÃO 2 ---
         
         # Transformações de tipo e coluna
         df_movimentos['Valor'] = pd.to_numeric(df_movimentos['Valor'])
@@ -206,9 +238,10 @@ df_saldos_filtered = df_saldos[
 st.divider()
 
 # Replicando as medidas DAX de cálculo
-# Assumindo que 'ENTRADA' e 'SAIDA' são os valores em 'Operacao'
-total_entradas = df_mov_filtered[df_mov_filtered['Operacao'] == 'ENTRADA']['Valor'].sum()
-total_saidas = df_mov_filtered[df_mov_filtered['Operacao'] == 'SAIDA']['Valor'].sum()
+# --- INÍCIO DA CORREÇÃO 3: Restaurar lógica de KPI (hífen) ---
+total_entradas = df_mov_filtered[~df_mov_filtered['Operacao'].str.contains('-')]['Valor'].sum()
+total_saidas = df_mov_filtered[df_mov_filtered['Operacao'].str.contains('-')]['Valor'].sum()
+# --- FIM DA CORREÇÃO 3 ---
 saldo_atual = total_entradas - total_saidas
 
 # Exibe os KPIs em colunas
@@ -231,14 +264,16 @@ with table1:
     # Replicando as medidas DAX (visual)
     df_extratos = df_mov_filtered.copy()
     
+    # --- INÍCIO DA CORREÇÃO 4: Restaurar lógica da tabela (hífen) ---
     df_extratos['Total Entradas'] = df_extratos.apply(
-        lambda row: row['Valor'] if row['Operacao'] == 'ENTRADA' else 0,
+        lambda row: row['Valor'] if '-' not in row['Operacao'] else 0,
         axis=1
     )
     df_extratos['Total Saídas'] = df_extratos.apply(
-        lambda row: row['Valor'] if row['Operacao'] == 'SAIDA' else 0,
+        lambda row: row['Valor'] if '-' in row['Operacao'] else 0,
         axis=1
     )
+    # --- FIM DA CORREÇÃO 4 ---
     
     # Agrupa por Data e Descrição, como no seu visual
     df_display = df_extratos.groupby(
@@ -260,19 +295,27 @@ with table1:
     df_display_formatted['Total Entradas'] = df_display_formatted['Total Entradas'].apply(
         lambda x: f"R$ {x:,.2f}" if x > 0 else ""
     )
+    # --- INÍCIO DA CORREÇÃO 5: Restaurar cor vermelha ---
     df_display_formatted['Total Saídas'] = df_display_formatted['Total Saídas'].apply(
-        lambda x: f"R$ {x:,.2f}" if x > 0 else ""
+        # Adiciona o estilo de cor vermelha e negrito para saídas
+        lambda x: f"<span style='color:red; font-weight:bold;'>R$ {x:,.2f}</span>" if x > 0 else ""
     )
+    # --- FIM DA CORREÇÃO 5 ---
 
     # Renomeia colunas para o visual
     df_display_formatted = df_display_formatted.rename(columns={'Descricao': 'Descrição'})
     
-    st.dataframe(
-        df_display_formatted[['Data', 'Descrição', 'Total Entradas', 'Total Saídas']],
-        use_container_width=True,
-        hide_index=True,
-        height=400 # Define uma altura fixa para a tabela
+    # --- INÍCIO DA CORREÇÃO 6: Restaurar exibição em HTML ---
+    # Converte o dataframe para HTML, 'escape=False' permite renderizar o CSS
+    html_table = df_display_formatted[['Data', 'Descrição', 'Total Entradas', 'Total Saídas']].to_html(
+        escape=False, 
+        index=False, 
+        border=0, # Remove bordas
+        classes="extratos-table" # Adiciona uma classe CSS
     )
+    # Exibe a tabela HTML
+    st.markdown(html_table, unsafe_allow_html=True)
+    # --- FIM DA CORREÇÃO 6 ---
 
 with table2:
     st.subheader("Saldo de todas as contas")
