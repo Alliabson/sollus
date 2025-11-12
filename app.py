@@ -175,22 +175,21 @@ def load_receber(api_token):
     """
     try:
         headers = {"Authorization": f"Bearer {api_token}"}
-        # --- CORREÇÃO: Munda da API /boletos para /recebers ---
-        # Adiciona DesabilitarPaginacao=true pois o JSON de exemplo tem a mesma estrutura (itens, totalizador)
         url_receber = "https://api.flow2.com.br/v1/recebers?DesabilitarPaginacao=true"
         response = requests.get(url_receber, headers=headers)
-        response.raise_for_status() # Lança erro para 4xx/5xx
+        response.raise_for_status() 
 
-        # --- CORREÇÃO (Erro "Expecting value...") ---
-        # Se a resposta for vazia, o .json() falha.
         if not response.text:
-            return pd.DataFrame() # Retorna um DataFrame vazio
+            return pd.DataFrame() 
             
         data = response.json()
         
-        # Normaliza a partir da chave 'itens', como no JSON de exemplo
-        df_receber = pd.json_normalize(data, record_path=['itens'])
-        return df_receber
+        # A API de 'recebers' tem a chave 'itens' como o JSON de exemplo
+        if 'itens' in data:
+            df_receber = pd.json_normalize(data, record_path=['itens'])
+            return df_receber
+        else:
+            return pd.DataFrame() # Retorna vazio se 'itens' não existir
 
     except requests.exceptions.RequestException as e:
         st.error(f"Erro ao carregar dados da API de Contas a Receber: {e}")
@@ -201,6 +200,47 @@ def load_receber(api_token):
     except Exception as e:
         st.error(f"Erro inesperado ao carregar Contas a Receber: {e}")
         return None
+
+# --- NOVA FUNÇÃO ---
+@st.cache_data(ttl=3600) # Cache de clientes por 1 hora
+def load_clientes(api_token):
+    """
+    Carrega os dados dos clientes da API /v1/clientes para o "VLOOKUP".
+    """
+    try:
+        headers = {"Authorization": f"Bearer {api_token}"}
+        # Assumindo que a API de clientes também aceita DesabilitarPaginacao
+        url_clientes = "https://api.flow2.com.br/v1/clientes?DesabilitarPaginacao=true"
+        response = requests.get(url_clientes, headers=headers)
+        response.raise_for_status()
+
+        if not response.text:
+            return pd.DataFrame(columns=['idCliente', 'NomeCliente']) # Retorna vazio
+            
+        data = response.json()
+        
+        # Tenta normalizar por 'itens', se falhar, usa a raiz
+        if 'itens' in data:
+            df_clientes = pd.json_normalize(data, record_path=['itens'])
+        else:
+            df_clientes = pd.json_normalize(data)
+
+        # Mapeia as colunas (baseado no seu JSON de 'recebers')
+        # Precisamos do 'id' (do cliente) e 'nomeRazaoSocial'
+        if 'id' in df_clientes.columns and 'nomeRazaoSocial' in df_clientes.columns:
+            df_clientes = df_clientes.rename(columns={
+                "id": "idCliente",
+                "nomeRazaoSocial": "NomeCliente"
+            })
+            return df_clientes[['idCliente', 'NomeCliente']]
+        else:
+            st.warning("API de Clientes não retornou 'id' ou 'nomeRazaoSocial'. Nomes de clientes não serão exibidos.")
+            return pd.DataFrame(columns=['idCliente', 'NomeCliente'])
+
+    except Exception as e:
+        st.warning(f"Não foi possível carregar nomes de clientes: {e}. Exibindo IDs.")
+        return pd.DataFrame(columns=['idCliente', 'NomeCliente'])
+
 
 # --- Início da Interface ---
 
@@ -223,7 +263,7 @@ with tab1:
 
     if df_movimentos is None or df_saldos is None:
         st.error("Falha ao carregar dados. Verifique a API e o Token.")
-        st.stop() # Usamos st.stop() para parar a execução apenas desta aba
+        st.stop() 
 
     st.subheader("Filtros")
     col1, col2 = st.columns([1, 2])
@@ -305,13 +345,10 @@ with tab1:
         )
         df_display_formatted = df_display_formatted.rename(columns={'Descricao': 'Descrição'})
         
-        # Converte para HTML
         html_table = df_display_formatted[['Data', 'Descrição', 'Total Entradas', 'Total Saídas']].to_html(
             escape=False, index=False, border=0, classes="extratos-table"
         )
         
-        # --- APLICAÇÃO DA BARRA DE ROLAGEM ---
-        # Envolve a tabela HTML no 'div' com rolagem
         st.markdown(f'<div class="table-container">{html_table}</div>', unsafe_allow_html=True)
 
     with table2:
@@ -330,74 +367,80 @@ with tab1:
             df_saldos_display,
             use_container_width=True,
             hide_index=True,
-            height=400 # O st.dataframe já tem barra de rolagem nativa com 'height'
+            height=400 
         )
 
-# --- ABA 2: CONTAS A RECEBER (FUNCIONAL) ---
+# --- ABA 2: CONTAS A RECEBER (RECONSTRUÍDA) ---
 with tab2:
-    # Carrega os dados para esta aba
-    df_receber = load_receber(api_token)
+    # Carrega AMBOS os dataframes
+    df_receber_raw = load_receber(api_token)
+    df_clientes = load_clientes(api_token)
     
-    if df_receber is None:
+    if df_receber_raw is None:
         st.error("Falha ao carregar dados de Contas a Receber. Verifique a API e o Token.")
-        st.stop() # Para a execução desta aba
+        st.stop() 
 
-    if df_receber.empty:
+    if df_receber_raw.empty:
         st.info("Nenhum item de Contas a Receber encontrado.")
         st.stop()
 
     try:
-        # --- Transformação dos Dados (Baseado no JSON de exemplo) ---
+        # --- Transformação (Mapeamento de colunas do usuário) ---
+        df_receber = df_receber_raw.copy()
         hoje = pd.Timestamp.now().date()
         
-        # Converte colunas de data (ignorando erros se já forem nulas)
-        df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber['dataVencimentoReal'], errors='coerce').dt.date
-        df_receber['dataBaixa'] = pd.to_datetime(df_receber['dataBaixa'], errors='coerce').dt.date
+        # Converte Datas (usando os nomes que você forneceu)
+        df_receber['Vencimento'] = pd.to_datetime(df_receber['dataVencimentoReal'], errors='coerce').dt.date
+        df_receber['Recebido em'] = pd.to_datetime(df_receber['dataCredito'], errors='coerce').dt.date # dataCredito = pago
         
-        # Função para definir o status
-        def get_status(row):
-            # O novo JSON tem a coluna 'situacao', mas podemos usar a dataBaixa para ser mais seguro
-            if pd.notna(row['dataBaixa']):
+        # Converte Valores (usando os nomes que você forneceu)
+        df_receber['Valor'] = pd.to_numeric(df_receber['valorAReceberParcela']) # Valor principal
+        df_receber['Valor Recebido'] = pd.to_numeric(df_receber['valorRecebido'])
+        
+        # Status (usando o nome que você forneceu)
+        # Vamos criar um status calculado, pois é mais útil para KPIs
+        def get_status_calculado(row):
+            if pd.notna(row['Recebido em']):
                 return "Recebido"
-            if pd.isna(row['dataVencimentoReal']):
+            if pd.isna(row['Vencimento']):
                 return "Sem Vencimento"
-            if row['dataVencimentoReal'] < hoje:
+            if row['Vencimento'] < hoje:
                 return "Vencido"
-            if row['dataVencimentoReal'] == hoje:
-                return "Vence Hoje"
-            return "A Receber"
-
-        df_receber['Status'] = df_receber.apply(get_status, axis=1)
+            return "A Receber" # Inclui "Vence Hoje"
+            
+        df_receber['Status_Calculado'] = df_receber.apply(get_status_calculado, axis=1)
         
-        # --- ATUALIZAÇÃO: Usa 'valorParcela' como a coluna de valor principal
-        df_receber['Valor'] = pd.to_numeric(df_receber['valorParcela'])
-        
-        # --- CORREÇÃO (KeyError: 'cliente.nomeRazaoSocial') ---
-        # Verifica se a coluna foi criada pelo json_normalize antes de a aceder
-        if 'cliente.nomeRazaoSocial' in df_receber.columns:
-            df_receber['Cliente'] = df_receber['cliente.nomeRazaoSocial']
+        # --- Merge (VLOOKUP) dos Clientes ---
+        # Verifica se a chave 'idCliente' existe nos dados de 'receber'
+        if 'idCliente' in df_receber.columns and not df_clientes.empty:
+            df_receber = pd.merge(df_receber, df_clientes, on='idCliente', how='left')
+            # Se o cliente não for encontrado no merge (NaN), usa o ID como fallback
+            df_receber['Cliente'] = df_receber['NomeCliente'].fillna("ID: " + df_receber['idCliente'].astype(str))
+        elif 'idCliente' in df_receber.columns:
+            st.warning("Não foi possível carregar nomes de clientes, exibindo IDs.")
+            df_receber['Cliente'] = "ID: " + df_receber['idCliente'].astype(str)
         else:
-            # Se a coluna não existir (ex: API retornou dados sem cliente),
-            # cria uma coluna 'Cliente' com um valor padrão.
+            st.warning("Coluna 'idCliente' não encontrada nos dados a receber. Clientes não podem ser exibidos.")
             df_receber['Cliente'] = "Cliente não informado"
-        # --- FIM DA CORREÇÃO ---
 
         # --- KPIs (Métricas) ---
         st.divider()
-        total_a_receber = df_receber[df_receber['Status'].isin(['A Receber', 'Vence Hoje'])]['Valor'].sum()
-        total_vencido = df_receber[df_receber['Status'] == 'Vencido']['Valor'].sum()
+        # Usamos 'Valor' (valorAReceberParcela) para o que está em aberto
+        total_a_receber = df_receber[df_receber['Status_Calculado'] == 'A Receber']['Valor'].sum()
+        total_vencido = df_receber[df_receber['Status_Calculado'] == 'Vencido']['Valor'].sum()
         
+        # Usamos 'Valor Recebido' para o que foi pago
         mes_atual = hoje.month
         ano_atual = hoje.year
         recebido_mes = df_receber[
-            (df_receber['Status'] == 'Recebido') &
-            (df_receber['dataBaixa'].apply(lambda x: x.month == mes_atual if pd.notna(x) else False)) &
-            (df_receber['dataBaixa'].apply(lambda x: x.year == ano_atual if pd.notna(x) else False))
-        ]['Valor'].sum()
+            (df_receber['Status_Calculado'] == 'Recebido') &
+            (df_receber['Recebido em'].apply(lambda x: x.month == mes_atual if pd.notna(x) else False)) &
+            (df_receber['Recebido em'].apply(lambda x: x.year == ano_atual if pd.notna(x) else False))
+        ]['Valor Recebido'].sum() 
 
         kpi1, kpi2, kpi3 = st.columns(3)
-        kpi1.metric("Total a Receber (e Vence Hoje)", format_brl(total_a_receber))
-        kpi2.metric("Total Vencido (não recebido)", format_brl(total_vencido), delta_color="inverse")
+        kpi1.metric("Total a Receber", format_brl(total_a_receber))
+        kpi2.metric("Total Vencido", format_brl(total_vencido), delta_color="inverse")
         kpi3.metric("Total Recebido (Este Mês)", format_brl(recebido_mes))
 
         # --- Filtros ---
@@ -407,22 +450,20 @@ with tab2:
         col_f1, col_f2 = st.columns(2)
         
         with col_f1:
-            status_options = sorted(df_receber['Status'].unique())
+            # Filtra pelo status que calculamos (Vencido, A Receber, etc.)
+            status_options = sorted(df_receber['Status_Calculado'].unique())
             selected_status = st.multiselect(
-                "Status",
+                "Status (Calculado)",
                 options=status_options,
                 default=status_options
             )
         
         with col_f2:
-            # Lida com datas de vencimento que podem ser nulas (NaT)
-            min_venc = df_receber['dataVencimentoReal'].min()
-            max_venc = df_receber['dataVencimentoReal'].max()
+            min_venc = df_receber['Vencimento'].min()
+            max_venc = df_receber['Vencimento'].max()
             
-            if pd.isna(min_venc):
-                min_venc = hoje
-            if pd.isna(max_venc):
-                max_venc = hoje
+            if pd.isna(min_venc): min_venc = hoje
+            if pd.isna(max_venc): max_venc = hoje
                 
             venc_date_range = st.date_input(
                 "Período de Vencimento",
@@ -434,18 +475,14 @@ with tab2:
 
         # --- Aplicação dos Filtros ---
         if len(venc_date_range) == 2:
-            start_venc_filter = venc_date_range[0]
-            end_venc_filter = venc_date_range[1]
+            start_venc_filter, end_venc_filter = venc_date_range
         else:
-            start_venc_filter = min_venc
-            end_venc_filter = max_venc
+            start_venc_filter, end_venc_filter = min_venc, max_venc
 
-        # Filtra o dataframe
-        # Lida com NaT (datas nulas) não sendo filtradas corretamente
         df_receber_filtered = df_receber[
-            (df_receber['Status'].isin(selected_status)) &
-            (df_receber['dataVencimentoReal'] >= start_venc_filter) &
-            (df_receber['dataVencimentoReal'] <= end_venc_filter)
+            (df_receber['Status_Calculado'].isin(selected_status)) &
+            (df_receber['Vencimento'] >= start_venc_filter) &
+            (df_receber['Vencimento'] <= end_venc_filter)
         ]
 
         # --- Tabela de Contas a Receber ---
@@ -454,16 +491,25 @@ with tab2:
         df_receber_display = df_receber_filtered.copy()
         
         # Formatação para exibição
-        df_receber_display['Valor'] = df_receber_display['Valor'].apply(format_brl)
-        df_receber_display['Vencimento'] = pd.to_datetime(df_receber_display['dataVencimentoReal']).dt.strftime('%d/%m/%Y')
-        df_receber_display['Recebido em'] = pd.to_datetime(df_receber_display['dataBaixa']).dt.strftime('%d/%m/%Y')
+        df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
+        df_receber_display['Vencimento'] = df_receber_display['Vencimento'].dt.strftime('%d/%m/%Y')
+        df_receber_display['Recebido em'] = df_receber_display['Recebido em'].dt.strftime('%d/%m/%Y')
         
+        # Limpa NaT (Not a Time) se a data for nula
         df_receber_display['Vencimento'] = df_receber_display['Vencimento'].replace('NaT', '')
         df_receber_display['Recebido em'] = df_receber_display['Recebido em'].replace('NaT', '')
 
         st.dataframe(
             df_receber_display[[
-                'Status', 'Vencimento', 'Cliente', 'Valor', 'Recebido em', 'numero', 'parcela'
+                'Status_Calculado', # O status que calculamos
+                'situacao',         # O status da API (que você pediu)
+                'Vencimento', 
+                'Cliente', 
+                'Valor Parcela', 
+                'Recebido em', 
+                'numero', 
+                'parcela',
+                'historicoEmissao' # A descrição que você pediu
             ]],
             use_container_width=True,
             hide_index=True,
@@ -472,4 +518,6 @@ with tab2:
 
     except Exception as e:
         st.error(f"Erro ao processar e exibir os dados de Contas a Receber: {e}")
-        st.info("Verifique se a API retornou dados.")
+        st.info("Verifique se a API retornou dados e se os nomes das colunas estão corretos.")
+        st.subheader("Dados Brutos (Primeiros 5)")
+        st.json(df_receber_raw.head().to_json(orient="records"))
