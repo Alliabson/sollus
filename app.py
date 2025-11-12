@@ -492,12 +492,20 @@ with tab2:
         
         # Formatação para exibição
         df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
-        df_receber_display['Vencimento'] = df_receber_display['Vencimento'].dt.strftime('%d/%m/%Y')
-        df_receber_display['Recebido em'] = df_receber_display['Recebido em'].dt.strftime('%d/%m/%Y')
         
-        # Limpa NaT (Not a Time) se a data for nula
-        df_receber_display['Vencimento'] = df_receber_display['Vencimento'].replace('NaT', '')
-        df_receber_display['Recebido em'] = df_receber_display['Recebido em'].replace('NaT', '')
+        # --- CORREÇÃO (Erro: Can only use .dt accessor) ---
+        # Alterado de .dt.strftime para .apply() para formatar 
+        # colunas que contêm objetos 'datetime.date' em vez de 'datetime64[ns]'
+        df_receber_display['Vencimento'] = df_receber_display['Vencimento'].apply(
+            lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
+        )
+        df_receber_display['Recebido em'] = df_receber_display['Recebido em'].apply(
+            lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
+        )
+        
+        # As linhas abaixo já não são necessárias graças ao .apply()
+        # df_receber_display['Vencimento'] = df_receber_display['Vencimento'].replace('NaT', '')
+        # df_receber_display['Recebido em'] = df_receber_display['Recebido em'].replace('NaT', '')
 
         st.dataframe(
             df_receber_display[[
