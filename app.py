@@ -8,6 +8,23 @@ from datetime import datetime
 # ISSO DEVE SER O PRIMEIRO COMANDO STREAMLIT
 st.set_page_config(layout="wide", page_title="Controle Bancário")
 
+# --- Função Helper de Formatação ---
+def format_brl(value):
+    """
+    Formata um número float para o padrão BRL (R$ 1.234,56).
+    """
+    try:
+        # Formata como en-US (ex: 1,234.56)
+        formatted = f"{float(value):,.2f}"
+        # Inverte os separadores para o padrão pt-BR
+        # 1. Troca vírgula por placeholder: 1X234.56
+        # 2. Troca ponto por vírgula: 1X234,56
+        # 3. Troca placeholder por ponto: 1.234,56
+        formatted_br = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {formatted_br}"
+    except (ValueError, TypeError):
+        return "R$ 0,00"
+
 # --- Estilização CSS Customizada ---
 # Injeta CSS para replicar a aparência verde do seu Power BI
 st.markdown("""
@@ -86,8 +103,9 @@ st.markdown("""
 
     /* Oculta o "Made with Streamlit" */
     footer {visibility: hidden;}
-    /* Oculta o menu principal (hamburguer) */
-    #MainMenu {visibility: hidden;}
+    
+    /* --- AJUSTE: Linha abaixo foi removida para exibir o menu --- */
+    /* #MainMenu {visibility: hidden;} */
 
 </style>
 """, unsafe_allow_html=True)
@@ -260,10 +278,10 @@ saldo_atual = total_entradas - total_saidas
 
 # Exibe os KPIs em colunas
 kpi1, kpi2, kpi3 = st.columns(3)
-kpi1.metric("Total de entradas", f"R$ {total_entradas:,.2f}")
-kpi2.metric("Total de saídas", f"R$ {total_saidas:,.2f}", 
-             delta=f"R$ {-total_saidas:,.2f}", delta_color="inverse") # Opcional: delta negativo
-kpi3.metric("Saldo atual", f"R$ {saldo_atual:,.2f}")
+kpi1.metric("Total de entradas", format_brl(total_entradas))
+kpi2.metric("Total de saídas", format_brl(total_saidas), 
+             delta=format_brl(-total_saidas), delta_color="inverse") # Opcional: delta negativo
+kpi3.metric("Saldo atual", format_brl(saldo_atual))
 
 
 # --- Tabelas (Visuais) ---
@@ -307,12 +325,12 @@ with table1:
     df_display_formatted = df_display.copy()
     df_display_formatted['Data'] = pd.to_datetime(df_display_formatted['Data']).dt.strftime('%d/%m/%Y')
     df_display_formatted['Total Entradas'] = df_display_formatted['Total Entradas'].apply(
-        lambda x: f"R$ {x:,.2f}" if x > 0 else ""
+        lambda x: format_brl(x) if x > 0 else ""
     )
     # --- INÍCIO DA CORREÇÃO 5: Restaurar cor vermelha ---
     df_display_formatted['Total Saídas'] = df_display_formatted['Total Saídas'].apply(
         # Adiciona o estilo de cor vermelha e negrito para saídas
-        lambda x: f"<span style='color:red; font-weight:bold;'>R$ {x:,.2f}</span>" if x > 0 else ""
+        lambda x: f"<span style='color:red; font-weight:bold;'>{format_brl(x)}</span>" if x > 0 else ""
     )
     # --- FIM DA CORREÇÃO 5 ---
 
@@ -344,7 +362,7 @@ with table2:
 
     # Formatação
     df_saldos_display['Saldo dos bancos'] = df_saldos_display['Saldo dos bancos'].apply(
-        lambda x: f"R$ {x:,.2f}"
+        lambda x: format_brl(x)
     )
 
     st.dataframe(
