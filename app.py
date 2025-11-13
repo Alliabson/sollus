@@ -112,19 +112,28 @@ st.markdown("""
         color: #333333;
     }
 
-    /* --- INÍCIO DA CORREÇÃO (COR DA FONTE DA TABELA) --- */
-
-    /* Tabela da Direita (Saldo de todas as contas) */
+    /* --- INÍCIO DA CORREÇÃO (COR DA FONTE DA TABELA - Light/Dark Mode) --- */
+    
+    /* 1. PADRÃO (Light Mode): Define o texto como escuro */
     .stDataFrame td {
-        color: #DDDDDD !important; /* Cor clara para ser legível no modo escuro */
+        color: #333333 !important; /* Cor escura padrão */
     }
-
-    /* Tabela da Esquerda (Extratos Bancários) */
     .extratos-table td {
         padding: 8px;
-        border-bottom: 1px solid #DDDDDD; /* Linha cinza entre-linhas */
+        border-bottom: 1px solid #DDDDDD;
         vertical-align: top;
-        color: #DDDDDD !important; /* Cor clara Padrão (o vermelho irá sobrepor) */
+        color: #333333 !important; /* Cor escura padrão (o vermelho irá sobrepor) */
+    }
+
+    /* 2. MODO ESCURO (Dark Mode): Detecta o tema do navegador */
+    @media (prefers-color-scheme: dark) {
+        /* Sobrescreve para texto claro no modo escuro */
+        .stDataFrame td {
+            color: #DDDDDD !important; 
+        }
+        .extratos-table td {
+            color: #DDDDDD !important;
+        }
     }
     /* --- FIM DA CORREÇÃO --- */
 
@@ -251,7 +260,7 @@ def load_movimentos_e_saldos(api_token):
         st.error(f"Erro ao carregar dados da API (Mov/Saldos): {e}")
         return None, None
     except Exception as e:
-        st.error(f"Erro ao processar os dados (Mov/Saldos): {e}")
+        st.error(f"Erro ao processar os dados (Mov/SaldOS): {e}")
         return None, None
 
 @st.cache_data(ttl=600) # Cache de 10 minutos
@@ -436,7 +445,7 @@ with tab_bancario:
         kpi1_cb.metric("Total de entradas", format_brl(total_entradas))
         kpi2_cb.metric("Total de saídas", format_brl(total_saidas), 
                          delta=format_brl(-total_saidas), delta_color="inverse")
-        kpi3_cb.metric("Saldo atual", format_brl(saldo_atual))
+        kpi3_cb.metric("Saldo atual", format_brl(total_atual))
 
         # --- Tabelas (Visuais) ---
         st.divider()
