@@ -112,6 +112,23 @@ st.markdown("""
         color: #333333;
     }
 
+    /* --- INÍCIO DA CORREÇÃO (COR DA FONTE DA TABELA) --- */
+
+    /* Tabela da Direita (Saldo de todas as contas) */
+    .stDataFrame td {
+        color: #DDDDDD !important; /* Cor clara para ser legível no modo escuro */
+    }
+
+    /* Tabela da Esquerda (Extratos Bancários) */
+    .extratos-table td {
+        padding: 8px;
+        border-bottom: 1px solid #DDDDDD; /* Linha cinza entre-linhas */
+        vertical-align: top;
+        color: #DDDDDD !important; /* Cor clara Padrão (o vermelho irá sobrepor) */
+    }
+    /* --- FIM DA CORREÇÃO --- */
+
+
     /* Estilos para a tabela de extratos HTML (com barra de rolagem) */
     .extratos-table-container {
         height: 400px; /* Altura fixa para barra de rolagem */
@@ -134,11 +151,8 @@ st.markdown("""
         position: sticky; /* Faz o cabeçalho "grudar" no topo */
         top: 0;
     }
-    .extratos-table td {
-        padding: 8px;
-        border-bottom: 1px solid #DDDDDD; /* Linha cinza entre-linhas */
-        vertical-align: top;
-    }
+    /* .extratos-table td { ... } JÁ FOI DEFINIDO ACIMA */
+
     .extratos-table tr:last-child td {
         border-bottom: none;
     }
