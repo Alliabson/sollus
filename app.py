@@ -33,7 +33,7 @@ def get_status(row):
     # 1. Verifica se foi pago (Baixado)
     # Usando 'dataBaixa' (pagamento) ou 'dataCredito' (quando o dinheiro entrou)
     if pd.notna(row['dataBaixa']) or pd.notna(row['dataCredito']):
-        return "Baixado" # <-- MUDANÇA (de "Recebido")
+        return "Baixado" 
     
     # 2. Prepara as datas para comparação (normalizar remove a hora)
     today = pd.to_datetime(date.today()).normalize()
@@ -41,15 +41,15 @@ def get_status(row):
     
     # 3. Verifica se a data de vencimento é válida
     if pd.isna(vencimento):
-        return "A vencer" # <-- MUDANÇA (de "A Receber")
+        return "A vencer" 
         
     # 4. Compara as datas (agora normalizadas)
     if vencimento == today:
-        return "Vence hoje" # <-- NOVO STATUS
+        return "Vence hoje" 
     elif vencimento < today:
         return "Vencido"
     else: # (vencimento > today)
-        return "A vencer" # <-- MUDANÇA (de "A Receber")
+        return "A vencer" 
 
 # --- Estilização CSS Customizada ---
 # Injeta CSS para replicar a aparência verde do seu Power BI
@@ -131,11 +131,16 @@ st.markdown("""
 
     /* 2. MODO ESCURO (Dark Mode): Detecta o tema do navegador */
     @media (prefers-color-scheme: dark) {
-        /* Sobrescreve para texto claro APENAS a st.dataframe (Saldo de Contas) */
-        /* A .extratos-table NUNCA fica escura, então sua fonte (definida acima) */
-        /* deve permanecer escura. */
+        
+        /* 2a. Tabela "Saldo de Contas" (st.dataframe): Fica com texto claro */
         .stDataFrame td {
             color: #DDDDDD !important; 
+        }
+
+        /* 2b. Tabela "Extratos Bancários" (HTML): FORÇA o texto a ficar escuro */
+        /* Anula a decisão do Firefox/Edge de deixar o texto claro */
+        .extratos-table td {
+            color: #333333 !important; /* Força o texto escuro no fundo claro */
         }
     }
     /* --- FIM DA CORREÇÃO --- */
