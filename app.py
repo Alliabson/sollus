@@ -445,7 +445,9 @@ with tab_bancario:
         kpi1_cb.metric("Total de entradas", format_brl(total_entradas))
         kpi2_cb.metric("Total de saídas", format_brl(total_saidas), 
                          delta=format_brl(-total_saidas), delta_color="inverse")
-        kpi3_cb.metric("Saldo atual", format_brl(total_atual))
+        # --- CORREÇÃO (NameError): 'total_atual' foi corrigido para 'saldo_atual' ---
+        kpi3_cb.metric("Saldo atual", format_brl(saldo_atual))
+        # --- FIM DA CORREÇÃO ---
 
         # --- Tabelas (Visuais) ---
         st.divider()
