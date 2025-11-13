@@ -194,16 +194,15 @@ def load_movimentos_e_saldos(api_token):
         if 'Operacao' in df_movimentos.columns:
             df_movimentos['Operacao'] = df_movimentos['Operacao'].astype(str)
         
-        # Transformações de tipo e coluna
+        # --- CORREÇÃO: Lógica de data simplificada ---
         df_movimentos['Valor'] = pd.to_numeric(df_movimentos.get('Valor', 0))
-        df_movimentos['DataMovimento'] = pd.to_datetime(df_movimentos.get('DataMovimento', None))
+        # 1. Converte 'DataMovimento' para datetime, tratando erros
+        df_movimentos['DataMovimento'] = pd.to_datetime(df_movimentos.get('DataMovimento', None), errors='coerce')
         
-        if 'DataMovimento' in df_movimentos:
-            df_movimentos['Data'] = df_movimentos['DataMovimento'].dt.date
-            df_movimentos['Horario'] = df_movimentos['DataMovimento'].dt.time
-        else:
-            df_movimentos['Data'] = pd.NaT
-            df_movimentos['Horario'] = pd.NaT
+        # 2. Cria 'Data' e 'Horario'. Se 'DataMovimento' for NaT, 'Data' também será.
+        df_movimentos['Data'] = df_movimentos['DataMovimento'].dt.date
+        df_movimentos['Horario'] = df_movimentos['DataMovimento'].dt.time
+        # --- FIM DA CORREÇÃO ---
 
         df_movimentos['Descricao'] = df_movimentos.get('Descricao', '').astype(str).str.upper()
 
@@ -396,12 +395,17 @@ with tab_bancario:
         # Garante que as datas de filtro não são NaT
         if pd.isna(start_date_filter_mov): start_date_filter_mov = min_date_mov
         if pd.isna(end_date_filter_mov): end_date_filter_mov = max_date_mov
-            
+        
+        # --- CORREÇÃO DO FILTRO DE DATA (PÁGINA 1) ---
+        # Adicionado .notna() para ignorar linhas onde 'Data' é NaT (Nula)
+        # antes de tentar a comparação de datas.
         df_mov_filtered = df_movimentos[
+            (df_movimentos['Data'].notna()) & # <-- ESTA LINHA FOI ADICIONADA
             (df_movimentos['Data'] >= start_date_filter_mov) &
             (df_movimentos['Data'] <= end_date_filter_mov) &
             (df_movimentos['Banco'].isin(selected_banks))
         ]
+        # --- FIM DA CORREÇÃO ---
         
         df_saldos_filtered = df_saldos[
             df_saldos['Banco'].isin(selected_banks)
@@ -517,9 +521,6 @@ with tab_receber:
             # Isso garante que todos os valores (para KPIs e tabelas) sejam positivos
             df_receber['Valor'] = pd.to_numeric(df_receber.get('valorAReceberParcela', 0), errors='coerce').fillna(0).abs()
             
-            # --- ADICIONADO: Coluna "Código do Projeto" ---
-            df_receber['Codigo Projeto'] = df_receber.get('codigoProjeto', 'N/A').fillna('N/A')
-
             # Colunas de data para filtro (apenas data, sem hora)
             df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
             df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date # Usando 'dataBaixa' (pagamento)
@@ -635,7 +636,6 @@ with tab_receber:
             st.dataframe(
                 df_receber_display[[
                     'Cliente',
-                    'Codigo Projeto', # <-- COLUNA ADICIONADA
                     'Vencimento',
                     'Recebido em',
                     'Status',
