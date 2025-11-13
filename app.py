@@ -533,10 +533,10 @@ with tab_receber:
             
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
             
-            # --- ADIÇÃO: Coluna 'Número' ---
-            # Renomeia 'numero' (da API) para 'Número' (para exibição)
-            df_receber['Número'] = df_receber.get('numero', 'N/A')
-            # --- FIM DA ADIÇÃO ---
+            # --- ALTERAÇÃO: Coluna 'Projeto' ---
+            # Renomeia 'codigoProjeto' (da API) para 'Projeto' (para exibição)
+            df_receber['Projeto'] = df_receber.get('codigoProjeto', 'N/A')
+            # --- FIM DA ALTERAÇÃO ---
 
             # --- Fim da Preparação ---
 
@@ -621,9 +621,8 @@ with tab_receber:
             df_receber_display = df_receber_filtered.copy()
             
             # --- REMOÇÃO: Linha de Total ---
-            # O código da linha de Total (que estava aqui) foi removido.
             
-            # 2. Formata as colunas para exibição
+            # Formata as colunas para exibição
             df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
             
             df_receber_display['Vencimento'] = df_receber_display['Vencimento'].apply(
@@ -636,7 +635,7 @@ with tab_receber:
             st.dataframe(
                 df_receber_display[[
                     'Cliente',
-                    'Número', # <-- Coluna 'Número' que você pediu
+                    'Projeto', # <-- ALTERAÇÃO: 'Número' para 'Projeto'
                     'Vencimento',
                     'Recebido em',
                     'Status',
