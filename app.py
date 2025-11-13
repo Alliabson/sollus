@@ -28,24 +28,28 @@ def format_brl(value):
 
 def get_status(row):
     """
-    Calcula o status de um título (A Receber, Recebido, Vencido).
+    Calcula o status de um título (A vencer, Vence hoje, Vencido, Baixado).
     """
-    # Se 'dataBaixa' (data de pagamento) existe, está Recebido.
-    # Usando 'dataCredito' como fallback, conforme mapeamento
+    # 1. Verifica se foi pago (Baixado)
+    # Usando 'dataBaixa' (pagamento) ou 'dataCredito' (quando o dinheiro entrou)
     if pd.notna(row['dataBaixa']) or pd.notna(row['dataCredito']):
-        return "Recebido"
+        return "Baixado" # <-- MUDANÇA (de "Recebido")
     
-    # Se não foi pago, verifica o vencimento
-    today = pd.to_datetime(date.today())
-    vencimento = pd.to_datetime(row['dataVencimentoReal'])
+    # 2. Prepara as datas para comparação (normalizar remove a hora)
+    today = pd.to_datetime(date.today()).normalize()
+    vencimento = pd.to_datetime(row['dataVencimentoReal']).normalize()
     
+    # 3. Verifica se a data de vencimento é válida
     if pd.isna(vencimento):
-        return "A Receber" # Sem data de vencimento
+        return "A vencer" # <-- MUDANÇA (de "A Receber")
         
-    if vencimento < today:
+    # 4. Compara as datas (agora normalizadas)
+    if vencimento == today:
+        return "Vence hoje" # <-- NOVO STATUS
+    elif vencimento < today:
         return "Vencido"
-    else:
-        return "A Receber"
+    else: # (vencimento > today)
+        return "A vencer" # <-- MUDANÇA (de "A Receber")
 
 # --- Estilização CSS Customizada ---
 # Injeta CSS para replicar a aparência verde do seu Power BI
@@ -623,7 +627,8 @@ with tab_receber:
 
             # Calcula KPIs a partir do kpi_df (filtrado por data)
             # --- CORREÇÃO (abs()): Remove o abs() da SOMA (já foi aplicado nos dados) ---
-            total_a_receber = kpi_df[kpi_df['Status'] != 'Recebido']['Valor'].sum()
+            # --- CORREÇÃO (Status): Usa "Baixado" em vez de "Recebido" ---
+            total_a_receber = kpi_df[kpi_df['Status'] != 'Baixado']['Valor'].sum()
             total_vencido = kpi_df[kpi_df['Status'] == 'Vencido']['Valor'].sum()
             
             # KPI "Recebido no Mês" (Este MÊS) - Ignora todos os filtros
