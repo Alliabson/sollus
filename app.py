@@ -31,7 +31,8 @@ def get_status(row):
     Calcula o status de um título (A Receber, Recebido, Vencido).
     """
     # Se 'dataBaixa' (data de pagamento) existe, está Recebido.
-    if pd.notna(row['dataBaixa']):
+    # Usando 'dataCredito' como fallback, conforme mapeamento
+    if pd.notna(row['dataBaixa']) or pd.notna(row['dataCredito']):
         return "Recebido"
     
     # Se não foi pago, verifica o vencimento
@@ -249,7 +250,6 @@ def load_receber_e_clientes(api_token):
         headers = {"Authorization": f"Bearer {api_token}"}
         
         # 1. Carregar Contas a Receber (/v1/recebers)
-        # Usamos DesabilitarPaginacao=true, assumindo que funciona como na /movimentos
         url_receber = "https://api.flow2.com.br/v1/recebers?DesabilitarPaginacao=true"
         response_receber = requests.get(url_receber, headers=headers)
         response_receber.raise_for_status()
@@ -294,18 +294,24 @@ def load_receber_e_clientes(api_token):
             df_clientes = pd.DataFrame(columns=['idCliente', 'Cliente']) # DataFrame vazio
 
         # 3. Juntar as tabelas (Merge/VLOOKUP)
-        if not df_receber.empty and not df_clientes.empty:
-            # Garante que a chave 'idCliente' existe em df_receber
+        if not df_receber.empty:
             if 'idCliente' not in df_receber.columns:
                  df_receber['idCliente'] = pd.NA
                  
-            df_final = pd.merge(
-                df_receber,
-                df_clientes,
-                on="idCliente",
-                how="left" # Mantém todos os títulos, mesmo sem cliente correspondente
-            )
+            if not df_clientes.empty:
+                df_final = pd.merge(
+                    df_receber,
+                    df_clientes,
+                    on="idCliente",
+                    how="left" # Mantém todos os títulos, mesmo sem cliente correspondente
+                )
+            else:
+                df_final = df_receber
+            
             # Preenche clientes nulos
+            if 'Cliente' not in df_final.columns:
+                df_final['Cliente'] = "Cliente não informado"
+            
             df_final['Cliente'] = df_final['Cliente'].fillna("Cliente não informado")
         else:
             df_final = df_receber
@@ -354,8 +360,9 @@ with tab_bancario:
             min_date_mov = df_movimentos['Data'].min()
             max_date_mov = df_movimentos['Data'].max()
             
-            if pd.isna(min_date_mov) or pd.isna(max_date_mov):
-                min_date_mov, max_date_mov = date.today(), date.today()
+            # Fallback se não houver datas
+            if pd.isna(min_date_mov): min_date_mov = date.today()
+            if pd.isna(max_date_mov): max_date_mov = date.today()
 
             date_range_mov = st.date_input(
                 "Período",
@@ -386,10 +393,10 @@ with tab_bancario:
 
         # --- Aplicação dos Filtros (Controle Bancário) ---
         
-        # Garante que 'Data' é comparável (converte para datetime.date se não for)
-        if not df_movimentos.empty:
-            df_movimentos['Data'] = pd.to_datetime(df_movimentos['Data']).dt.date
-
+        # Garante que as datas de filtro não são NaT
+        if pd.isna(start_date_filter_mov): start_date_filter_mov = min_date_mov
+        if pd.isna(end_date_filter_mov): end_date_filter_mov = max_date_mov
+            
         df_mov_filtered = df_movimentos[
             (df_movimentos['Data'] >= start_date_filter_mov) &
             (df_movimentos['Data'] <= end_date_filter_mov) &
@@ -431,6 +438,10 @@ with tab_bancario:
                 axis=1
             )
             
+            # Garante que 'Descricao' existe antes de agrupar
+            if 'Descricao' not in df_extratos.columns:
+                df_extratos['Descricao'] = "N/A"
+                
             df_display = df_extratos.groupby(
                 ['Data', 'Descricao']
             ).agg({
@@ -443,12 +454,7 @@ with tab_bancario:
 
             # Formatação para exibição
             df_display_formatted = df_display.copy()
-            
-            # Formata a data (que agora é um objeto 'date')
-            df_display_formatted['Data'] = df_display_formatted['Data'].apply(
-                lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
-            )
-            
+            df_display_formatted['Data'] = pd.to_datetime(df_display_formatted['Data']).dt.strftime('%d/%m/%Y')
             df_display_formatted['Total Entradas'] = df_display_formatted['Total Entradas'].apply(
                 lambda x: format_brl(x) if x > 0 else ""
             )
@@ -493,43 +499,33 @@ with tab_receber:
     # Carrega os dados
     df_receber_raw = load_receber_e_clientes(api_token)
 
-    if df_receber_raw is None:
+    if df_receber_raw is None or df_receber_raw.empty:
         st.error("Falha ao carregar dados de Contas a Receber. Verifique a API e o Token.")
     else:
         try:
             # --- Preparação e Limpeza de Dados (Contas a Receber) ---
             df_receber = df_receber_raw.copy()
             
-            # Garante que as colunas de data são datetime
-            # Usando .get() para evitar KeyError se a coluna não existir
+            # Mapeamento de colunas (conforme sua lista)
+            # .get() previne KeyError se a coluna não existir
             df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber.get('dataVencimentoReal', None), errors='coerce')
             df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa', None), errors='coerce')
             df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito', None), errors='coerce')
+            df_receber['situacao'] = df_receber.get('situacao', 'Indefinido')
             
+            # --- CORREÇÃO (abs()): Aplica abs() na criação da coluna 'Valor' ---
+            # Isso garante que todos os valores (para KPIs e tabelas) sejam positivos
+            df_receber['Valor'] = pd.to_numeric(df_receber.get('valorAReceberParcela', 0), errors='coerce').fillna(0).abs()
+            
+            # --- ADICIONADO: Coluna "Código do Projeto" ---
+            df_receber['Codigo Projeto'] = df_receber.get('codigoProjeto', 'N/A').fillna('N/A')
+
             # Colunas de data para filtro (apenas data, sem hora)
             df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
             df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date # Usando 'dataBaixa' (pagamento)
             
-            # Garante que 'situacao' existe
-            if 'situacao' not in df_receber.columns:
-                df_receber['situacao'] = "Indefinido"
-            
-            # Garante que 'valorAReceberParcela' existe
-            if 'valorAReceberParcela' not in df_receber.columns:
-                df_receber['valorAReceberParcela'] = 0
-            
-            # --- CORREÇÃO (Bug "Recebido Negativo") ---
-            # Adiciona a coluna 'valorRecebido' e garante que é numérica
-            if 'valorRecebido' not in df_receber.columns:
-                df_receber['valorRecebido'] = 0
-            df_receber['valorRecebido'] = pd.to_numeric(df_receber.get('valorRecebido', 0), errors='coerce').fillna(0)
-            # --- FIM DA CORREÇÃO ---
-
             # Coluna de Status (Vencido, A Receber, Recebido)
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
-            
-            # Coluna de Valor (usando 'valorAReceberParcela' como nos disse)
-            df_receber['Valor'] = pd.to_numeric(df_receber['valorAReceberParcela'], errors='coerce').fillna(0)
             
             # --- Fim da Preparação ---
 
@@ -584,9 +580,9 @@ with tab_receber:
                 end_date_filter_cr = end_date_filter_cr.date()
 
             # Cria um DataFrame base para os KPIs
-            # Filtra por VENCIMENTO dentro do range
+            # Trata o caso de 'Vencimento' ser NaT (não pode ser comparado)
             kpi_df = df_receber[
-                (df_receber['Vencimento'].notna()) & # Garante que a data não é nula
+                (df_receber['Vencimento'].notna()) & # Ignora títulos sem data de vencimento
                 (df_receber['Vencimento'] >= start_date_filter_cr) &
                 (df_receber['Vencimento'] <= end_date_filter_cr)
             ].copy()
@@ -599,30 +595,25 @@ with tab_receber:
             # --- KPIs (Contas a Receber) ---
             st.divider()
 
-            # Calcula KPIs a partir do kpi_df (filtrado por data de VENCIMENTO)
+            # Calcula KPIs a partir do kpi_df (filtrado por data)
+            # --- CORREÇÃO (abs()): Remove o abs() da SOMA (já foi aplicado nos dados) ---
             total_a_receber = kpi_df[kpi_df['Status'] != 'Recebido']['Valor'].sum()
             total_vencido = kpi_df[kpi_df['Status'] == 'Vencido']['Valor'].sum()
             
-            # --- CORREÇÃO (Bug "Recebido Negativo") ---
-            # O KPI "Recebido" deve usar a data do filtro, mas aplicado
-            # à coluna 'Recebido em' e somando 'valorRecebido'.
-            
-            # 1. Filtra o dataframe principal pela data de RECEBIMENTO
-            df_recebido_no_periodo = df_receber[
-                (df_receber['Recebido em'].notna()) & # Garante que a data não é nula
-                (df_receber['Recebido em'] >= start_date_filter_cr) &
-                (df_receber['Recebido em'] <= end_date_filter_cr)
+            # KPI "Recebido no Mês" (Este MÊS) - Ignora todos os filtros
+            today = date.today()
+            df_recebido_mes = df_receber[
+                (df_receber['Recebido em'].notna()) &
+                (df_receber['Recebido em'] >= date(today.year, today.month, 1)) &
+                (df_receber['Recebido em'] <= today)
             ]
-            
-            # 2. Soma a coluna correta ('valorRecebido')
-            total_recebido_periodo = df_recebido_no_periodo['valorRecebido'].sum()
-            # --- FIM DA CORREÇÃO ---
+            # --- CORREÇÃO (abs()): Remove o abs() da SOMA (já foi aplicado nos dados) ---
+            total_recebido_mes = df_recebido_mes['Valor'].sum()
 
             kpi1_cr, kpi2_cr, kpi3_cr = st.columns(3)
             kpi1_cr.metric("Total a Receber (no período)", format_brl(total_a_receber))
             kpi2_cr.metric("Total Vencido (no período)", format_brl(total_vencido))
-            # 3. Atualiza o label e o valor do KPI
-            kpi3_cr.metric("Total Recebido (no período)", format_brl(total_recebido_periodo))
+            kpi3_cr.metric("Total Recebido (Este Mês)", format_brl(total_recebido_mes))
 
             # --- Tabela (Contas a Receber) ---
             st.subheader("Detalhe de Contas a Receber")
@@ -630,15 +621,8 @@ with tab_receber:
             df_receber_display = df_receber_filtered.copy()
             
             # Formatação para exibição
-            # --- CORREÇÃO (Bug "Recebido Negativo") ---
-            # A tabela deve mostrar o 'valorRecebido' se o status for 'Recebido'
-            # e o 'Valor' (a receber) para os outros status.
-            df_receber_display['Valor Exibido'] = df_receber_display.apply(
-                lambda row: row['valorRecebido'] if row['Status'] == 'Recebido' else row['Valor'],
-                axis=1
-            )
-            df_receber_display['Valor Parcela'] = df_receber_display['Valor Exibido'].apply(format_brl)
-            # --- FIM DA CORREÇÃO ---
+            # A coluna 'Valor' agora será sempre positiva, corrigindo o print
+            df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
             
             # Formata as colunas de data (que são objetos 'date', não 'datetime')
             df_receber_display['Vencimento'] = df_receber_display['Vencimento'].apply(
@@ -651,6 +635,7 @@ with tab_receber:
             st.dataframe(
                 df_receber_display[[
                     'Cliente',
+                    'Codigo Projeto', # <-- COLUNA ADICIONADA
                     'Vencimento',
                     'Recebido em',
                     'Status',
