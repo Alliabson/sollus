@@ -118,7 +118,7 @@ st.markdown("""
 
     /* --- INÍCIO DA CORREÇÃO (COR DA FONTE DA TABELA - Light/Dark Mode) --- */
     
-    /* 1. PADRÃO (Light Mode): Define o texto como escuro */
+    /* 1. PADRÃO (Light Mode): Define o texto como escuro para AMBAS as tabelas */
     .stDataFrame td {
         color: #333333 !important; /* Cor escura padrão */
     }
@@ -131,12 +131,11 @@ st.markdown("""
 
     /* 2. MODO ESCURO (Dark Mode): Detecta o tema do navegador */
     @media (prefers-color-scheme: dark) {
-        /* Sobrescreve para texto claro no modo escuro */
+        /* Sobrescreve para texto claro APENAS a st.dataframe (Saldo de Contas) */
+        /* A .extratos-table NUNCA fica escura, então sua fonte (definida acima) */
+        /* deve permanecer escura. */
         .stDataFrame td {
             color: #DDDDDD !important; 
-        }
-        .extratos-table td {
-            color: #DDDDDD !important;
         }
     }
     /* --- FIM DA CORREÇÃO --- */
@@ -264,7 +263,7 @@ def load_movimentos_e_saldos(api_token):
         st.error(f"Erro ao carregar dados da API (Mov/Saldos): {e}")
         return None, None
     except Exception as e:
-        st.error(f"Erro ao processar os dados (Mov/SaldOS): {e}")
+        st.error(f"Erro ao processar os dados (Mov/SSaldOS): {e}")
         return None, None
 
 @st.cache_data(ttl=600) # Cache de 10 minutos
