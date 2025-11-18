@@ -23,15 +23,18 @@ def get_status(row):
     """
     Calcula o status de um título (A vencer, Vence hoje, Vencido, Baixado).
     """
+    # 1. Verifica se foi pago (Baixado)
     if pd.notna(row.get('dataBaixa')) or pd.notna(row.get('dataCredito')):
         return "Baixado"
     
     dt_venc = row.get('dataVencimentoReal')
     
+    # 2. Verifica se é NaT/nulo. Se for, assume 'A vencer'.
     if pd.isna(dt_venc):
         return "A vencer"
 
     try:
+        # Garante que dt_venc é Timestamp e normaliza.
         today = pd.Timestamp.now().normalize()
         vencimento = pd.to_datetime(dt_venc).tz_localize(None).normalize()
         
@@ -371,12 +374,9 @@ with tab_receber:
             
             df_receber['situacao'] = df_receber.get('situacao', 'Indefinido')
             
-            # --- CORREÇÃO: Usando 'valorBruto' conforme solicitado ---
-            # Assume-se que 'valorBruto' é o valor correto para a parcela
+            # Usando 'valorBruto'
             df_receber['Valor'] = pd.to_numeric(df_receber.get('valorBruto', 0), errors='coerce').fillna(0).abs()
-            # --- FIM DA CORREÇÃO DE VALOR ---
             
-            # Garante que não há linhas duplicadas (para o problema de 2 vs 3 linhas)
             df_receber.drop_duplicates(subset=['id', 'parcela'], keep='first', inplace=True)
             
             df_receber['Vencimento_Display'] = df_receber['dataVencimentoReal'].dt.date
@@ -415,14 +415,16 @@ with tab_receber:
                     end_date_filter_cr = date_range_cr[1]
 
             # --- Aplicação dos Filtros ---
-            start_ts = pd.Timestamp(start_date_filter_cr)
-            end_ts = pd.Timestamp(end_date_filter_cr) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+            start_ts = pd.Timestamp(start_date_filter_cr).normalize()
+            # Fim do dia final
+            end_ts = pd.Timestamp(end_date_filter_cr).normalize() + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
 
-            # 1. Filtro de Data
+            # 1. Filtro de Data: Inclui NaT/nulos (títulos sem data de vencimento)
             kpi_df = df_receber[
-                (df_receber['dataVencimentoReal'].notna()) & 
+                (df_receber['dataVencimentoReal'].notna() & 
                 (df_receber['dataVencimentoReal'] >= start_ts) &
-                (df_receber['dataVencimentoReal'] <= end_ts)
+                (df_receber['dataVencimentoReal'] <= end_ts)) |
+                (df_receber['dataVencimentoReal'].isna())
             ].copy()
             
             # 2. Filtro de Status
@@ -430,6 +432,8 @@ with tab_receber:
 
             # --- KPIs ---
             st.divider()
+            
+            # Total a Receber (Reflete Filtro de Status E Data)
             total_a_receber = df_receber_filtered[df_receber_filtered['Status'] != 'Baixado']['Valor'].sum()
             total_vencido = df_receber_filtered[df_receber_filtered['Status'] == 'Vencido']['Valor'].sum()
             
@@ -442,7 +446,6 @@ with tab_receber:
             total_recebido_mes = df_recebido_mes['Valor'].sum()
 
             kpi1_cr, kpi2_cr, kpi3_cr = st.columns(3)
-            # KPI Total a Receber agora usa df_receber_filtered para refletir o filtro de status
             kpi1_cr.metric("Total a Receber (no período)", format_brl(total_a_receber))
             kpi2_cr.metric("Total Vencido (no período)", format_brl(total_vencido))
             kpi3_cr.metric("Total Recebido (Este Mês)", format_brl(total_recebido_mes))
@@ -460,7 +463,6 @@ with tab_receber:
                 lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
             )
             
-            # Renomeia a coluna 'Projeto' para 'Nº projeto' (para corresponder ao Print 1)
             df_receber_display.rename(columns={'Projeto': 'Nº projeto'}, inplace=True)
             
             st.dataframe(
