@@ -33,24 +33,33 @@ def get_status(row):
     """
     # 1. Verifica se foi pago (Baixado)
     # Usando 'dataBaixa' (pagamento) ou 'dataCredito' (quando o dinheiro entrou)
-    if pd.notna(row['dataBaixa']) or pd.notna(row['dataCredito']):
-        return "Baixado" 
+    if pd.notna(row.get('dataBaixa')) or pd.notna(row.get('dataCredito')):
+        return "Baixado"
     
-    # 2. Prepara as datas para comparação (normalizar remove a hora)
-    today = pd.to_datetime(date.today()).normalize()
-    vencimento = pd.to_datetime(row['dataVencimentoReal']).normalize()
+    # 2. Obtém o valor da data de vencimento
+    dt_venc = row.get('dataVencimentoReal')
     
-    # 3. Verifica se a data de vencimento é válida
-    if pd.isna(vencimento):
-        return "A vencer" # Se não tem data, assume-se "A vencer"
+    # 3. Verifica IMEDIATAMENTE se é NaT (Not a Time) ou nulo antes de qualquer operação
+    if pd.isna(dt_venc):
+        return "A vencer" # Se não tem data, assume-se "A vencer" por padrão
+
+    try:
+        # 4. Normaliza as datas (remove horas) para comparação correta
+        # Como já verificamos pd.isna acima, dt_venc deve ser um Timestamp válido aqui
+        today = pd.Timestamp.now().normalize()
+        vencimento = pd.to_datetime(dt_venc).normalize()
         
-    # 4. Compara as datas (agora normalizadas)
-    if vencimento == today:
-        return "Vence hoje" 
-    elif vencimento < today:
-        return "Vencido"
-    else: # (vencimento > today)
-        return "A vencer" 
+        # 5. Compara as datas
+        if vencimento == today:
+            return "Vence hoje"
+        elif vencimento < today:
+            return "Vencido"
+        else: # (vencimento > today)
+            return "A vencer"
+            
+    except (AttributeError, ValueError):
+        # Fallback caso ocorra algum erro bizarro de conversão
+        return "A vencer"
 
 # --- Estilização CSS Customizada ---
 # Injeta CSS para replicar a aparência verde do seu Power BI
@@ -435,7 +444,7 @@ with tab_bancario:
         kpi1_cb, kpi2_cb, kpi3_cb = st.columns(3)
         kpi1_cb.metric("Total de entradas", format_brl(total_entradas))
         kpi2_cb.metric("Total de saídas", format_brl(total_saidas), 
-                         delta=format_brl(-total_saidas), delta_color="inverse")
+                          delta=format_brl(-total_saidas), delta_color="inverse")
         kpi3_cb.metric("Saldo atual", format_brl(saldo_atual))
 
         # --- Tabelas (Visuais) ---
@@ -531,6 +540,7 @@ with tab_receber:
             df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
             df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date 
             
+            # Aplicando a função get_status corrigida
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
             
             # --- ALTERAÇÃO: Coluna 'Projeto' ---
