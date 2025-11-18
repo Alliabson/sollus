@@ -4,6 +4,8 @@ import requests
 from datetime import datetime, date
 
 # Define a configuração da página
+# layout="wide" usa a tela inteira, como no seu BI desktop.
+# ISSO DEVE SER O PRIMEIRO COMANDO STREAMLIT
 st.set_page_config(layout="wide", page_title="Aplicação Financeira")
 
 # --- Funções Helper ---
@@ -13,11 +15,12 @@ def format_brl(value):
     Formata um número float para o padrão BRL (R$ 1.234,56).
     """
     try:
-        if pd.isna(value) or value == 0:
-            return "R$ 0,00"
         # Formata como en-US (ex: 1,234.56)
         formatted = f"{float(value):,.2f}"
         # Inverte os separadores para o padrão pt-BR
+        # 1. Troca vírgula por placeholder: 1X234.56
+        # 2. Troca ponto por vírgula: 1X234,56
+        # 3. Troca placeholder por ponto: 1.234,56
         formatted_br = formatted.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {formatted_br}"
     except (ValueError, TypeError):
@@ -26,71 +29,167 @@ def format_brl(value):
 def get_status(row):
     """
     Calcula o status de um título (A vencer, Vence hoje, Vencido, Baixado).
+    Baseado no print do BI: ['A vencer', 'Baixado', 'Vence hoje', 'Vencido']
     """
-    try:
-        # 1. Verifica se foi pago (Baixado)
-        if pd.notna(row.get('dataBaixa')) or pd.notna(row.get('dataCredito')):
-            return "Baixado"
+    # 1. Verifica se foi pago (Baixado)
+    # Usando 'dataBaixa' (pagamento) ou 'dataCredito' (quando o dinheiro entrou)
+    if pd.notna(row['dataBaixa']) or pd.notna(row['dataCredito']):
+        return "Baixado" 
+    
+    # 2. Prepara as datas para comparação (normalizar remove a hora)
+    today = pd.to_datetime(date.today()).normalize()
+    vencimento = pd.to_datetime(row['dataVencimentoReal']).normalize()
+    
+    # 3. Verifica se a data de vencimento é válida
+    if pd.isna(vencimento):
+        return "A vencer" # Se não tem data, assume-se "A vencer"
         
-        # Usa a coluna 'dataVencimentoReal' 
-        dt_venc = row.get('dataVencimentoReal')
-        
-        # 2. Verifica se a data de vencimento é válida (NaT)
-        if pd.isna(dt_venc):
-            return "A vencer"
-            
-        # 3. Prepara as datas para comparação
-        today = pd.to_datetime(date.today()).normalize()
-        vencimento = pd.to_datetime(dt_venc).normalize()
-        
-        # 4. Compara as datas
-        if vencimento == today:
-            return "Vence hoje"  
-        elif vencimento < today:
-            return "Vencido"
-        else:
-            return "A vencer" 
-    except Exception:
-        return "A vencer"
+    # 4. Compara as datas (agora normalizadas)
+    if vencimento == today:
+        return "Vence hoje" 
+    elif vencimento < today:
+        return "Vencido"
+    else: # (vencimento > today)
+        return "A vencer" 
 
-# --- Estilização CSS ---
+# --- Estilização CSS Customizada ---
+# Injeta CSS para replicar a aparência verde do seu Power BI
 st.markdown("""
 <style>
-    .stTabs {
+    /* Abas */
+    [data-testid="stTabs"] {
         background-color: #FAFAFA;
         border: 1px solid #E0E0E0;
         border-radius: 10px;
         padding: 10px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #4CAF50;
+    /* Botão da Aba Ativa */
+    [data-testid="stTabs"] button[aria-selected="true"] {
+        background-color: #4CAF50; /* Verde */
         color: white;
         font-weight: bold;
+        border-radius: 5px;
     }
+    /* Botão da Aba Inativa */
+    [data-testid="stTabs"] button {
+        background-color: transparent;
+        color: #555555;
+        border: none;
+        border-radius: 5px;
+    }
+
+    /* Títulos dos sub-cabeçalhos (Filtros, Extratos, Saldo) */
     h3 {
         color: #FFFFFF;
-        background-color: #4CAF50;
+        background-color: #4CAF50; /* Verde do seu BI */
         padding: 10px;
         border-radius: 5px;
         text-align: center;
     }
-    .stMetric {
+    
+    /* Styling dos cartões KPI (Métricas) */
+    [data-testid="stMetric"] {
         background-color: #FAFAFA;
         border: 1px solid #E0E0E0;
         border-radius: 10px;
         padding: 20px;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-    .stDataFrame th {
-        background-color: #E8F5E9;
+    [data-testid="stMetricLabel"] {
         font-weight: bold;
+        color: #555555;
     }
+    [data-testid="stMetricValue"] {
+        font-size: 2em;
+        font-weight: bold;
+        color: #333333 !important; 
+        background-color: transparent !important; 
+        user-select: none !important;
+    }
+    
+    /* Cabeçalho das tabelas (DataFrames) */
+    .stDataFrame th {
+        background-color: #E8F5E9; /* Verde claro */
+        font-size: 1.1em;
+        font-weight: bold;
+        color: #333333;
+    }
+
+    /* --- INÍCIO DA CORREÇÃO (COR DA FONTE DA TABELA - Light/Dark Mode) --- */
+    
+    /* 1. PADRÃO (Light Mode): Define o texto como escuro para AMBAS as tabelas */
+    .stDataFrame td {
+        color: #333333 !important; /* Cor escura padrão */
+    }
+    .extratos-table td {
+        padding: 8px;
+        border-bottom: 1px solid #DDDDDD;
+        vertical-align: top;
+        color: #333333 !important; /* Cor escura padrão (o vermelho irá sobrepor) */
+    }
+
+    /* 2. MODO ESCURO (Dark Mode): Detecta o tema do navegador */
+    @media (prefers-color-scheme: dark) {
+        
+        /* 2a. Tabela "Saldo de Contas" (st.dataframe): Fica com texto claro */
+        .stDataFrame td {
+            color: #DDDDDD !important; 
+        }
+
+        /* 2b. Tabela "Extratos Bancários" (HTML): FORÇA o texto a ficar escuro */
+        /* Esta é a regra de anulação para Firefox/Edge em Modo Escuro */
+        .extratos-table-container .extratos-table td {
+            color: #333333 !important; /* Força o texto escuro no fundo claro */
+        }
+    }
+    /* --- FIM DA CORREÇÃO --- */
+
+
+    /* Estilos para a tabela de extratos HTML (com barra de rolagem) */
+    .extratos-table-container {
+        height: 400px; /* Altura fixa para barra de rolagem */
+        overflow-y: auto; /* Adiciona barra de rolagem vertical */
+        border: 1px solid #E0E0E0;
+        border-radius: 5px;
+    }
+    .extratos-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .extratos-table th {
+        background-color: #E8F5E9; /* Verde claro (do .stDataFrame th) */
+        font-size: 1.1em;
+        font-weight: bold;
+        color: #333333;
+        padding: 8px;
+        text-align: left;
+        border-bottom: 2px solid #4CAF50; /* Linha verde */
+        position: sticky; /* Faz o cabeçalho "grudar" no topo */
+        top: 0;
+    }
+
+    .extratos-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    /* Remove o espaço extra no topo da página */
+    .block-container {
+        padding-top: 2rem;
+    }
+
+    /* Oculta o "Made with Streamlit" */
     footer {visibility: hidden;}
+    
+    /* Garante que o menu (hamburguer) está visível */
+    #MainMenu {visibility: visible;}
+
 </style>
 """, unsafe_allow_html=True)
 
-# --- Carregamento de Dados ---
+# --- Carregamento de Dados (Cache) ---
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600) # Cache de 10 minutos
 def load_movimentos_e_saldos(api_token):
     """
     Carrega dados das APIs de movimentos e saldos.
@@ -98,83 +197,113 @@ def load_movimentos_e_saldos(api_token):
     try:
         headers = {"Authorization": f"Bearer {api_token}"}
         
-        # 1. Carregar Movimentos Bancários
+        # 1. Carregar Movimentos Bancários (fMovimentos)
         url_movimentos = "https://api.flow2.com.br/v1/movimentosBancarios?DesabilitarPaginacao=true&DataMovimentoMaiorOuIgualA=2025-01-01"
-        response_mov = requests.get(url_movimentos, headers=headers, timeout=30)
+        response_mov = requests.get(url_movimentos, headers=headers)
         response_mov.raise_for_status()
         data_mov = response_mov.json()
         
         if 'itens' in data_mov and data_mov['itens']:
             df_movimentos = pd.json_normalize(data_mov, record_path=['itens'])
         else:
-            df_movimentos = pd.DataFrame(columns=['Data', 'Horario', 'Descricao', 'Valor', 'Operacao', 'Banco'])
+            # Retorna um DataFrame vazio se não houver 'itens'
+            st.warning("API de Movimentos não retornou 'itens'.")
+            cols_mov = ['Data', 'Horario', 'Descricao', 'Valor', 'Operacao', 'Banco']
+            df_movimentos = pd.DataFrame(columns=cols_mov)
             
-        # Renomeia e processa colunas
-        if not df_movimentos.empty:
-            df_movimentos = df_movimentos.rename(columns={
-                "valor": "Valor",
-                "dataMovimento": "DataMovimento",
-                "descricao": "Descricao",
-                "operacao": "Operacao",
-                "nomeBanco": "Banco"
-            })
-            
-            df_movimentos['Valor'] = pd.to_numeric(df_movimentos.get('Valor', 0), errors='coerce').fillna(0)
-            df_movimentos['DataMovimento'] = pd.to_datetime(df_movimentos.get('DataMovimento'), errors='coerce')
-            df_movimentos['Data'] = df_movimentos['DataMovimento'].dt.date
-            df_movimentos['Horario'] = df_movimentos['DataMovimento'].dt.time
-            df_movimentos['Descricao'] = df_movimentos.get('Descricao', '').astype(str).str.upper()
-            df_movimentos['Operacao'] = df_movimentos.get('Operacao', '').astype(str)
+        # Renomeia colunas
+        df_movimentos = df_movimentos.rename(columns={
+            "valor": "Valor",
+            "dataMovimento": "DataMovimento",
+            "descricao": "Descricao",
+            "operacao": "Operacao",
+            "nomeBanco": "Banco"
+        })
+        
+        # Garante que 'Operacao' é string
+        if 'Operacao' in df_movimentos.columns:
+            df_movimentos['Operacao'] = df_movimentos['Operacao'].astype(str)
+        
+        df_movimentos['Valor'] = pd.to_numeric(df_movimentos.get('Valor', 0))
+        df_movimentos['DataMovimento'] = pd.to_datetime(df_movimentos.get('DataMovimento', None), errors='coerce')
+        
+        df_movimentos['Data'] = df_movimentos['DataMovimento'].dt.date
+        df_movimentos['Horario'] = df_movimentos['DataMovimento'].dt.time
 
-        # 2. Carregar Saldo dos Bancos
+        df_movimentos['Descricao'] = df_movimentos.get('Descricao', '').astype(str).str.upper()
+
+        # 2. Carregar Saldo dos Bancos (fSaldoBancos)
         url_saldos = "https://api.flow2.com.br/v1/saldoBancos"
-        response_saldos = requests.get(url_saldos, headers=headers, timeout=30)
+        response_saldos = requests.get(url_saldos, headers=headers)
         response_saldos.raise_for_status()
         data_saldos = response_saldos.json()
         
         if data_saldos:
             df_saldos = pd.json_normalize(data_saldos)
-            df_saldos = df_saldos.rename(columns={
-                "banco.nome": "Banco",
-                "saldo": "Saldo dos bancos"
-            })
-            df_saldos['Saldo dos bancos'] = pd.to_numeric(df_saldos.get('Saldo dos bancos', 0), errors='coerce').fillna(0)
         else:
-            df_saldos = pd.DataFrame(columns=['Banco', 'Saldo dos bancos'])
+            st.warning("API de Saldos não retornou dados.")
+            cols_saldos = ['Banco', 'Saldo dos bancos']
+            df_saldos = pd.DataFrame(columns=cols_saldos)
+
+        # Renomeia colunas
+        df_saldos = df_saldos.rename(columns={
+            "banco.nome": "Banco",
+            "saldo": "Saldo dos bancos"
+        })
+        
+        df_saldos['Saldo dos bancos'] = pd.to_numeric(df_saldos.get('Saldo dos bancos', 0))
+        
+        # Garante que as colunas principais existem
+        df_movimentos = df_movimentos.reindex(columns=['Data', 'Horario', 'Descricao', 'Valor', 'Operacao', 'Banco'])
+        df_saldos = df_saldos.reindex(columns=['Banco', 'Saldo dos bancos'])
 
         return df_movimentos, df_saldos
 
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro ao carregar dados da API (Mov/Saldos): {e}")
+        return None, None
     except Exception as e:
-        st.error(f"Erro ao carregar dados bancários: {e}")
-        return pd.DataFrame(), pd.DataFrame()
+        st.error(f"Erro ao processar os dados (Mov/SSaldOS): {e}")
+        return None, None
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600) # Cache de 10 minutos
 def load_receber_e_clientes(api_token):
     """
-    Carrega dados das APIs de Contas a Receber e Clientes.
+    Carrega dados das APIs de Contas a Receber (/recebers) e Clientes.
     """
     try:
         headers = {"Authorization": f"Bearer {api_token}"}
         
-        # 1. Carregar Contas a Receber
+        # 1. Carregar Contas a Receber (/v1/recebers)
         url_receber = "https://api.flow2.com.br/v1/recebers?DesabilitarPaginacao=true"
-        response_receber = requests.get(url_receber, headers=headers, timeout=30)
+        response_receber = requests.get(url_receber, headers=headers)
         response_receber.raise_for_status()
-        data_receber = response_receber.json()
+        
+        try:
+            data_receber = response_receber.json()
+        except requests.exceptions.JSONDecodeError:
+            st.warning("A API de Contas a Receber (/recebers) retornou uma resposta vazia.")
+            data_receber = {} 
 
-        # Normaliza os 'itens'
+        # Normaliza os 'itens' (títulos)
         if 'itens' in data_receber and data_receber['itens']:
             df_receber = pd.json_normalize(data_receber, record_path=['itens'])
         else:
-            df_receber = pd.DataFrame()
+            st.warning("API de Contas a Receber não retornou 'itens'.")
+            df_receber = pd.DataFrame() 
 
-        # 2. Carregar Clientes
+        # 2. Carregar Clientes (/v1/clientes)
         url_clientes = "https://api.flow2.com.br/v1/clientes?DesabilitarPaginacao=true"
-        response_clientes = requests.get(url_clientes, headers=headers, timeout=30)
+        response_clientes = requests.get(url_clientes, headers=headers)
         response_clientes.raise_for_status()
-        data_clientes = response_clientes.json()
+        
+        try:
+            data_clientes = response_clientes.json()
+        except requests.exceptions.JSONDecodeError:
+            st.warning("A API de Clientes retornou uma resposta vazia.")
+            data_clientes = {}
 
-        # Normaliza os clientes
+        # Normaliza os 'itens' (clientes)
         if 'itens' in data_clientes and data_clientes['itens']:
             df_clientes = pd.json_normalize(data_clientes, record_path=['itens'])
             df_clientes = df_clientes.rename(columns={
@@ -183,198 +312,345 @@ def load_receber_e_clientes(api_token):
             })
             df_clientes = df_clientes[['idCliente', 'Cliente']] 
         else:
-            df_clientes = pd.DataFrame(columns=['idCliente', 'Cliente'])
+            st.warning("API de Clientes não retornou 'itens'.")
+            df_clientes = pd.DataFrame(columns=['idCliente', 'Cliente']) 
 
-        # 3. Juntar as tabelas
+        # 3. Juntar as tabelas (Merge/VLOOKUP)
         if not df_receber.empty:
             if 'idCliente' not in df_receber.columns:
-                df_receber['idCliente'] = None
+                 df_receber['idCliente'] = pd.NA
                  
             if not df_clientes.empty:
-                df_final = pd.merge(df_receber, df_clientes, on="idCliente", how="left")
+                df_final = pd.merge(
+                    df_receber,
+                    df_clientes,
+                    on="idCliente",
+                    how="left" 
+                )
             else:
                 df_final = df_receber
             
-            df_final['Cliente'] = df_final.get('Cliente', 'Cliente não informado').fillna('Cliente não informado')
+            if 'Cliente' not in df_final.columns:
+                df_final['Cliente'] = "Cliente não informado"
+            
+            df_final['Cliente'] = df_final['Cliente'].fillna("Cliente não informado")
         else:
-            df_final = pd.DataFrame(columns=['Cliente'])
+            df_final = df_receber
+            if 'Cliente' not in df_final.columns:
+                 df_final['Cliente'] = "Cliente não informado"
 
         return df_final
 
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro ao carregar dados da API (Receber/Clientes): {e}")
+        return None
     except Exception as e:
-        st.error(f"Erro ao carregar dados de contas a receber: {e}")
-        return pd.DataFrame()
+        st.error(f"Erro ao processar os dados (Receber/Clientes): {e}")
+        return None
 
-# --- Interface Principal ---
+# --- Início da Interface ---
 
-def main():
-    st.title("APLICAÇÃO FINANCEIRA")
+st.title("APLICAÇÃO FINANCEIRA")
+
+# Carrega o token da API a partir dos "secrets" do Streamlit
+try:
+    api_token = st.secrets["FLOW_API_TOKEN"]
+except KeyError:
+    st.error("Token da API (FLOW_API_TOKEN) não encontrado. Por favor, configure seu arquivo secrets.toml.")
+    st.stop()
+
+# Cria as Abas principais
+tab_bancario, tab_receber = st.tabs(["🏦 Controle Bancário", "🧾 Contas a Receber"])
+
+
+# --- ABA 1: CONTROLE BANCÁRIO ---
+with tab_bancario:
     
-    # Verifica se o token existe
-    try:
-        api_token = st.secrets["FLOW_API_TOKEN"]
-    except:
-        st.error("Token da API não encontrado. Configure o arquivo secrets.toml")
-        return
-    
-    # Cria abas
-    tab1, tab2 = st.tabs(["🏦 Controle Bancário", "🧾 Contas a Receber"])
-    
-    # ABA 1: CONTROLE BANCÁRIO
-    with tab1:
-        df_movimentos, df_saldos = load_movimentos_e_saldos(api_token)
+    # Carrega os dados
+    df_movimentos, df_saldos = load_movimentos_e_saldos(api_token)
+
+    if df_movimentos is None or df_saldos is None:
+        st.error("Falha ao carregar dados bancários. Verifique a API e o Token.")
+    else:
+        st.subheader("Filtros")
+        col1_cb, col2_cb = st.columns([1, 2])
+
+        with col1_cb:
+            min_date_mov = df_movimentos['Data'].min()
+            max_date_mov = df_movimentos['Data'].max()
+            
+            if pd.isna(min_date_mov): min_date_mov = date.today()
+            if pd.isna(max_date_mov): max_date_mov = date.today()
+
+            date_range_mov = st.date_input(
+                "Período",
+                [min_date_mov, max_date_mov],
+                min_value=min_date_mov,
+                max_value=max_date_mov,
+                format="DD/MM/YYYY",
+                key="date_range_mov" 
+            )
+            
+            start_date_filter_mov, end_date_filter_mov = min_date_mov, max_date_mov
+            if len(date_range_mov) == 2:
+                start_date_filter_mov = date_range_mov[0]
+                end_date_filter_mov = date_range_mov[1]
+
+        with col2_cb:
+            all_banks_mov = df_movimentos['Banco'].dropna().unique()
+            all_banks_saldos = df_saldos['Banco'].dropna().unique()
+            all_banks = sorted(list(set(list(all_banks_mov) + list(all_banks_saldos))))
+            
+            selected_banks = st.multiselect(
+                "Banco(s)",
+                options=all_banks,
+                default=all_banks,
+                key="selected_banks"
+            )
+
+        # --- Aplicação dos Filtros (Controle Bancário) ---
         
-        if df_movimentos.empty and df_saldos.empty:
-            st.info("Nenhum dado bancário disponível")
-        else:
-            # Filtros
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                if not df_movimentos.empty:
-                    min_date = df_movimentos['Data'].min() if 'Data' in df_movimentos.columns else date.today()
-                    max_date = df_movimentos['Data'].max() if 'Data' in df_movimentos.columns else date.today()
-                    date_range = st.date_input("Período", [min_date, max_date], key="tab1_date")
-                else:
-                    date_range = [date.today(), date.today()]
-            
-            with col2:
-                bancos = []
-                if not df_movimentos.empty and 'Banco' in df_movimentos.columns:
-                    bancos.extend(df_movimentos['Banco'].dropna().unique().tolist())
-                if not df_saldos.empty and 'Banco' in df_saldos.columns:
-                    bancos.extend(df_saldos['Banco'].dropna().unique().tolist())
-                bancos = sorted(list(set(bancos)))
-                bancos_selecionados = st.multiselect("Bancos", bancos, default=bancos, key="tab1_banks")
-            
-            # KPIs
-            if not df_movimentos.empty:
-                df_filtrado = df_movimentos[
-                    (df_movimentos['Data'].between(date_range[0], date_range[1])) &
-                    (df_movimentos['Banco'].isin(bancos_selecionados))
-                ] if 'Data' in df_movimentos.columns else df_movimentos
-                
-                entradas = df_filtrado[~df_filtrado['Operacao'].str.contains('-', na=False)]['Valor'].sum()
-                saidas = df_filtrado[df_filtrado['Operacao'].str.contains('-', na=False)]['Valor'].sum()
-                saldo = entradas - saidas
-            else:
-                entradas = saidas = saldo = 0
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Entradas", format_brl(entradas))
-            col2.metric("Saídas", format_brl(saidas))
-            col3.metric("Saldo", format_brl(saldo))
-            
-            # Tabelas
-            if not df_movimentos.empty:
-                st.subheader("Movimentos Bancários")
-                st.dataframe(df_filtrado[['Data', 'Descricao', 'Valor', 'Operacao', 'Banco']].head(50))
-            
-            if not df_saldos.empty:
-                st.subheader("Saldos Bancários")
-                st.dataframe(df_saldos[df_saldos['Banco'].isin(bancos_selecionados)])
-    
-    # ABA 2: CONTAS A RECEBER
-    with tab2:
-        df_receber = load_receber_e_clientes(api_token)
+        if pd.isna(start_date_filter_mov): start_date_filter_mov = min_date_mov
+        if pd.isna(end_date_filter_mov): end_date_filter_mov = max_date_mov
         
-        if df_receber.empty:
-            st.info("Nenhuma conta a receber encontrada")
-        else:
-            # Preprocessamento dos dados
-            try:
-                # Tratamento de datas - CORREÇÃO PRINCIPAL
-                def get_data_vencimento(row):
-                    # Tenta dataVencimentoNominal primeiro
-                    nominal = row.get('dataVencimentoNominal')
-                    if pd.notna(nominal) and nominal != '':
-                        return nominal
-                    # Fallback para dataVencimentoReal
-                    real = row.get('dataVencimentoReal')
-                    if pd.notna(real) and real != '':
-                        return real
-                    return pd.NaT
-                
-                df_receber['dataVencimentoFinal'] = df_receber.apply(get_data_vencimento, axis=1)
-                df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber['dataVencimentoFinal'], errors='coerce')
-                df_receber = df_receber.drop('dataVencimentoFinal', axis=1)
-                
-                # Outras datas
-                df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa'), errors='coerce')
-                df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito'), errors='coerce')
-                
-                # Valor
-                df_receber['Valor'] = pd.to_numeric(df_receber.get('valorBruto', 0), errors='coerce').fillna(0).abs()
-                
-                # Status
-                df_receber['Status'] = df_receber.apply(get_status, axis=1)
-                
-                # Colunas de exibição
-                df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
-                df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date
-                df_receber['Projeto'] = df_receber.get('codigoProjeto', 'N/A')
-                
-            except Exception as e:
-                st.error(f"Erro no processamento dos dados: {e}")
+        # Filtro de Data (corrigido para ignorar NaT)
+        df_mov_filtered = df_movimentos[
+            (df_movimentos['Data'].notna()) & 
+            (df_movimentos['Data'] >= start_date_filter_mov) &
+            (df_movimentos['Data'] <= end_date_filter_mov) &
+            (df_movimentos['Banco'].isin(selected_banks))
+        ]
+        
+        df_saldos_filtered = df_saldos[
+            df_saldos['Banco'].isin(selected_banks)
+        ]
+
+        # --- KPIs (Métricas) ---
+        st.divider()
+
+        total_entradas = df_mov_filtered[~df_mov_filtered['Operacao'].astype(str).str.contains('-')]['Valor'].sum()
+        total_saidas = df_mov_filtered[df_mov_filtered['Operacao'].astype(str).str.contains('-')]['Valor'].sum()
+        saldo_atual = total_entradas - total_saidas
+
+        kpi1_cb, kpi2_cb, kpi3_cb = st.columns(3)
+        kpi1_cb.metric("Total de entradas", format_brl(total_entradas))
+        kpi2_cb.metric("Total de saídas", format_brl(total_saidas), 
+                         delta=format_brl(-total_saidas), delta_color="inverse")
+        kpi3_cb.metric("Saldo atual", format_brl(saldo_atual))
+
+        # --- Tabelas (Visuais) ---
+        st.divider()
+        table1_cb, table2_cb = st.columns([2, 1])
+
+        with table1_cb:
+            st.subheader("Extratos Bancários")
             
-            # Filtros
-            col1, col2 = st.columns(2)
-            with col1:
-                status_opcoes = df_receber['Status'].unique().tolist() if 'Status' in df_receber.columns else []
-                status_selecionados = st.multiselect("Status", status_opcoes, default=status_opcoes)
+            df_extratos = df_mov_filtered.copy()
             
-            with col2:
-                if 'Vencimento' in df_receber.columns:
-                    min_venc = df_receber['Vencimento'].min()
-                    max_venc = df_receber['Vencimento'].max()
-                    if pd.isna(min_venc): min_venc = date.today()
-                    if pd.isna(max_venc): max_venc = date.today()
-                    periodo = st.date_input("Período Vencimento", [min_venc, max_venc], key="tab2_date")
-                else:
-                    periodo = [date.today(), date.today()]
+            df_extratos['Total Entradas'] = df_extratos.apply(
+                lambda row: row['Valor'] if '-' not in str(row['Operacao']) else 0,
+                axis=1
+            )
+            df_extratos['Total Saídas'] = df_extratos.apply(
+                lambda row: row['Valor'] if '-' in str(row['Operacao']) else 0,
+                axis=1
+            )
             
-            # Aplicar filtros
-            if 'Status' in df_receber.columns and 'Vencimento' in df_receber.columns:
-                df_filtrado = df_receber[
-                    (df_receber['Status'].isin(status_selecionados)) &
-                    (df_receber['Vencimento'].between(periodo[0], periodo[1]))
-                ]
-            else:
-                df_filtrado = df_receber
+            if 'Descricao' not in df_extratos.columns:
+                df_extratos['Descricao'] = "N/A"
+                
+            df_display = df_extratos.groupby(
+                ['Data', 'Descricao']
+            ).agg({
+                'Total Entradas': 'sum',
+                'Total Saídas': 'sum'
+            }).reset_index()
             
-            # KPIs
-            total_receber = df_filtrado[df_filtrado['Status'] != 'Baixado']['Valor'].sum() if 'Status' in df_filtrado.columns else 0
-            total_vencido = df_filtrado[df_filtrado['Status'] == 'Vencido']['Valor'].sum() if 'Status' in df_filtrado.columns else 0
+            df_display = df_display[(df_display['Total Entradas'] != 0) | (df_display['Total Saídas'] != 0)]
+            df_display = df_display.sort_values(by='Data', ascending=False)
+
+            # Formatação para exibição
+            df_display_formatted = df_display.copy()
+            df_display_formatted['Data'] = pd.to_datetime(df_display_formatted['Data']).dt.strftime('%d/%m/%Y')
+            df_display_formatted['Total Entradas'] = df_display_formatted['Total Entradas'].apply(
+                lambda x: format_brl(x) if x > 0 else ""
+            )
+            df_display_formatted['Total Saídas'] = df_display_formatted['Total Saídas'].apply(
+                lambda x: f"<span style='color:red; font-weight:bold;'>{format_brl(x)}</span>" if x > 0 else ""
+            )
+
+            df_display_formatted = df_display_formatted.rename(columns={'Descricao': 'Descrição'})
             
-            # Recebido este mês
-            hoje = date.today()
-            recebido_mes = df_receber[
+            html_table = df_display_formatted[['Data', 'Descrição', 'Total Entradas', 'Total Saídas']].to_html(
+                escape=False, 
+                index=False, 
+                border=0,
+                classes="extratos-table"
+            )
+            st.markdown(f'<div class="extratos-table-container">{html_table}</div>', unsafe_allow_html=True)
+
+        with table2_cb:
+            st.subheader("Saldo de todas as contas")
+            
+            df_saldos_display = df_saldos_filtered.copy().sort_values(by='Banco')
+            
+            total_saldo_contas = df_saldos_display['Saldo dos bancos'].sum()
+            total_row = pd.DataFrame([{'Banco': 'Total', 'Saldo dos bancos': total_saldo_contas}])
+            df_saldos_display = pd.concat([df_saldos_display, total_row], ignore_index=True)
+
+            df_saldos_display['Saldo dos bancos'] = df_saldos_display['Saldo dos bancos'].apply(format_brl)
+
+            st.dataframe(
+                df_saldos_display,
+                use_container_width=True,
+                hide_index=True,
+                height=400 
+            )
+
+
+# --- ABA 2: CONTAS A RECEBER ---
+with tab_receber:
+    
+    df_receber_raw = load_receber_e_clientes(api_token)
+
+    if df_receber_raw is None or df_receber_raw.empty:
+        st.error("Falha ao carregar dados de Contas a Receber. Verifique a API e o Token.")
+    else:
+        try:
+            # --- Preparação e Limpeza de Dados (Contas a Receber) ---
+            df_receber = df_receber_raw.copy()
+            
+            df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber.get('dataVencimentoReal', None), errors='coerce')
+            df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa', None), errors='coerce')
+            df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito', None), errors='coerce')
+            df_receber['situacao'] = df_receber.get('situacao', 'Indefinido')
+            
+            # Aplica abs() na criação da coluna 'Valor'
+            df_receber['Valor'] = pd.to_numeric(df_receber.get('valorAReceberParcela', 0), errors='coerce').fillna(0).abs()
+            
+            df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
+            df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date 
+            
+            df_receber['Status'] = df_receber.apply(get_status, axis=1)
+            
+            # --- ALTERAÇÃO: Coluna 'Projeto' ---
+            # Renomeia 'codigoProjeto' (da API) para 'Projeto' (para exibição)
+            df_receber['Projeto'] = df_receber.get('codigoProjeto', 'N/A')
+            # --- FIM DA ALTERAÇÃO ---
+
+            # --- Fim da Preparação ---
+
+            # --- Filtros (Contas a Receber) ---
+            st.subheader("Filtros de Contas a Receber")
+            col1_cr, col2_cr = st.columns([1, 1])
+
+            with col1_cr:
+                status_options = sorted(df_receber['Status'].unique())
+                selected_status = st.multiselect(
+                    "Status (Calculado)",
+                    options=status_options,
+                    default=status_options, 
+                    key="selected_status"
+                )
+
+            with col2_cr:
+                min_date_cr = df_receber['Vencimento'].min()
+                max_date_cr = df_receber['Vencimento'].max()
+
+                if pd.isna(min_date_cr): min_date_cr = date.today()
+                if pd.isna(max_date_cr): max_date_cr = date.today()
+
+                date_range_cr = st.date_input(
+                    "Período de Vencimento",
+                    [min_date_cr, max_date_cr],
+                    min_value=min_date_cr,
+                    max_value=max_date_cr,
+                    format="DD/MM/YYYY",
+                    key="date_range_cr"
+                )
+                
+                start_date_filter_cr, end_date_filter_cr = min_date_cr, max_date_cr
+                if len(date_range_cr) == 2:
+                    start_date_filter_cr = date_range_cr[0]
+                    end_date_filter_cr = date_range_cr[1]
+
+            # --- Aplicação dos Filtros ---
+            
+            # Converte as datas de filtro para datetime.date (se não forem)
+            if isinstance(start_date_filter_cr, datetime):
+                start_date_filter_cr = start_date_filter_cr.date()
+            if isinstance(end_date_filter_cr, datetime):
+                end_date_filter_cr = end_date_filter_cr.date()
+
+            # 1. DataFrame para KPIs (filtrado APENAS por Data)
+            kpi_df = df_receber[
+                (df_receber['Vencimento'].notna()) & 
+                (df_receber['Vencimento'] >= start_date_filter_cr) &
+                (df_receber['Vencimento'] <= end_date_filter_cr)
+            ].copy()
+            
+            # 2. DataFrame para Tabela (filtrado por Data E Status)
+            df_receber_filtered = kpi_df[
+                kpi_df['Status'].isin(selected_status)
+            ].copy()
+
+            # --- KPIs (Contas a Receber) ---
+            st.divider()
+
+            # Calcula KPIs a partir do kpi_df (filtrado por data)
+            total_a_receber = kpi_df[kpi_df['Status'] != 'Baixado']['Valor'].sum()
+            total_vencido = kpi_df[kpi_df['Status'] == 'Vencido']['Valor'].sum()
+            
+            # KPI "Recebido no Mês" (Este MÊS) - Ignora todos os filtros
+            today = date.today()
+            df_recebido_mes = df_receber[
                 (df_receber['Recebido em'].notna()) &
-                (df_receber['Recebido em'] >= date(hoje.year, hoje.month, 1)) &
-                (df_receber['Recebido em'] <= hoje)
-            ]['Valor'].sum() if 'Recebido em' in df_receber.columns else 0
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("A Receber", format_brl(total_receber))
-            col2.metric("Vencido", format_brl(total_vencido))
-            col3.metric("Recebido Mês", format_brl(recebido_mes))
-            
-            # Tabela principal
+                (df_receber['Recebido em'] >= date(today.year, today.month, 1)) &
+                (df_receber['Recebido em'] <= today)
+            ]
+            total_recebido_mes = df_recebido_mes['Valor'].sum()
+
+            kpi1_cr, kpi2_cr, kpi3_cr = st.columns(3)
+            kpi1_cr.metric("Total a Receber (no período)", format_brl(total_a_receber))
+            kpi2_cr.metric("Total Vencido (no período)", format_brl(total_vencido))
+            kpi3_cr.metric("Total Recebido (Este Mês)", format_brl(total_recebido_mes))
+
+            # --- Tabela (Contas a Receber) ---
             st.subheader("Detalhe de Contas a Receber")
             
-            colunas_exibir = ['Cliente', 'Projeto', 'Vencimento', 'Recebido em', 'Status', 'Valor']
-            colunas_disponiveis = [col for col in colunas_exibir if col in df_filtrado.columns]
+            df_receber_display = df_receber_filtered.copy()
             
-            if colunas_disponiveis:
-                df_display = df_filtrado[colunas_disponiveis].copy()
-                if 'Valor' in df_display.columns:
-                    df_display['Valor'] = df_display['Valor'].apply(format_brl)
-                if 'Projeto' in df_display.columns:
-                    df_display = df_display.rename(columns={'Projeto': 'Nº projeto'})
-                
-                st.dataframe(df_display, use_container_width=True, height=400)
-            else:
-                st.warning("Nenhuma coluna disponível para exibição")
+            # --- REMOÇÃO: Linha de Total ---
+            
+            # Formata as colunas para exibição
+            df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
+            
+            df_receber_display['Vencimento'] = df_receber_display['Vencimento'].apply(
+                lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
+            )
+            df_receber_display['Recebido em'] = df_receber_display['Recebido em'].apply(
+                lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
+            )
+            
+            st.dataframe(
+                df_receber_display[[
+                    'Cliente',
+                    'Projeto', # <-- ALTERAÇÃO: 'Número' para 'Projeto'
+                    'Vencimento',
+                    'Recebido em',
+                    'Status',
+                    'Valor Parcela'
+                ]],
+                use_container_width=True,
+                hide_index=True,
+                height=400
+            )
 
-# Executa a aplicação
-if __name__ == "__main__":
-    main()
+            # --- Dados Brutos (Para Depuração) ---
+            with st.expander("Dados Brutos (Primeiros 5)"):
+                st.dataframe(df_receber_raw.head(5))
+
+        except Exception as e:
+            st.error(f"Erro ao processar e exibir os dados de Contas a Receber: {e}")
+            st.info("Verifique se a API retornou dados e se os nomes das colunas estão corretos.")
+            st.dataframe(df_receber_raw.head(5)) # Mostra dados brutos no erro
