@@ -23,18 +23,17 @@ def get_status(row):
     """
     Calcula o status de um título (A vencer, Vence hoje, Vencido, Baixado).
     """
-    # 1. Verifica se foi pago (Baixado)
     if pd.notna(row.get('dataBaixa')) or pd.notna(row.get('dataCredito')):
         return "Baixado"
     
-    dt_venc = row.get('dataVencimentoReal')
+    # AGORA USA dataVencimentoReal como a chave temporária (df_receber['dataVencimentoReal'])
+    # mas o valor veio de dataVencimentoNominal. O processamento é o mesmo.
+    dt_venc = row.get('dataVencimentoReal') 
     
-    # 2. Verifica se é NaT/nulo. Se for, assume 'A vencer'.
     if pd.isna(dt_venc):
         return "A vencer"
 
     try:
-        # Garante que dt_venc é Timestamp e normaliza.
         today = pd.Timestamp.now().normalize()
         vencimento = pd.to_datetime(dt_venc).tz_localize(None).normalize()
         
@@ -364,19 +363,26 @@ with tab_receber:
             # --- Preparação e Limpeza de Dados (Contas a Receber) ---
             df_receber = df_receber_raw.copy()
             
-            # --- CORREÇÃO DO ERRO DE DATAS E TIMEZONE ---
-            df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber.get('dataVencimentoReal'), utc=True, errors='coerce')
+            # --- CORREÇÃO DA DATA: USANDO dataVencimentoNominal ---
+            
+            # 1. PEGA O VALOR DE dataVencimentoNominal (se existir), ou string vazia (se NaT/float)
+            data_nominal = df_receber.get('dataVencimentoNominal', '').astype(str)
+            
+            # 2. Converte para datetime (utc=True para unificar timezones, errors='coerce' para NaT em falhas)
+            df_receber['dataVencimentoReal'] = pd.to_datetime(data_nominal, utc=True, errors='coerce')
+            
+            # 3. Remove a informação de fuso horário e normaliza para meia-noite
             df_receber['dataVencimentoReal'] = df_receber['dataVencimentoReal'].dt.tz_localize(None)
             df_receber['dataVencimentoReal'] = df_receber['dataVencimentoReal'].dt.normalize()
+            # --- FIM DA CORREÇÃO DE DATA ---
 
             df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa'), errors='coerce')
             df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito'), errors='coerce')
             
             df_receber['situacao'] = df_receber.get('situacao', 'Indefinido')
-            
-            # Usando 'valorBruto'
             df_receber['Valor'] = pd.to_numeric(df_receber.get('valorBruto', 0), errors='coerce').fillna(0).abs()
             
+            # Garante que não há linhas duplicadas (para o problema de 2 vs 3 linhas)
             df_receber.drop_duplicates(subset=['id', 'parcela'], keep='first', inplace=True)
             
             df_receber['Vencimento_Display'] = df_receber['dataVencimentoReal'].dt.date
@@ -394,6 +400,7 @@ with tab_receber:
                 selected_status = st.multiselect("Status (Calculado)", options=status_options, default=status_options, key="selected_status")
 
             with col2_cr:
+                # Usamos a coluna 'dataVencimentoReal' (que agora carrega o Nominal) para min/max
                 min_date_cr = df_receber['dataVencimentoReal'].min()
                 max_date_cr = df_receber['dataVencimentoReal'].max()
 
@@ -416,10 +423,9 @@ with tab_receber:
 
             # --- Aplicação dos Filtros ---
             start_ts = pd.Timestamp(start_date_filter_cr).normalize()
-            # Fim do dia final
             end_ts = pd.Timestamp(end_date_filter_cr).normalize() + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
 
-            # 1. Filtro de Data: Inclui NaT/nulos (títulos sem data de vencimento)
+            # 1. Filtro de Data: Inclui NaT/nulos (datas falhas/ausentes)
             kpi_df = df_receber[
                 (df_receber['dataVencimentoReal'].notna() & 
                 (df_receber['dataVencimentoReal'] >= start_ts) &
@@ -433,7 +439,6 @@ with tab_receber:
             # --- KPIs ---
             st.divider()
             
-            # Total a Receber (Reflete Filtro de Status E Data)
             total_a_receber = df_receber_filtered[df_receber_filtered['Status'] != 'Baixado']['Valor'].sum()
             total_vencido = df_receber_filtered[df_receber_filtered['Status'] == 'Vencido']['Valor'].sum()
             
@@ -456,6 +461,8 @@ with tab_receber:
             
             # Formatação final
             df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
+            
+            # Vencimento Display: Se for NaT (dataVencimentoNominal estava em branco), retorna string vazia.
             df_receber_display['Vencimento'] = df_receber_display['Vencimento_Display'].apply(
                 lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
             )
@@ -484,4 +491,5 @@ with tab_receber:
 
         except Exception as e:
             st.error(f"Erro ao processar dados de Contas a Receber: {e}")
+            st.write("Verifique a estrutura dos dados brutos abaixo:")
             st.dataframe(df_receber_raw.head(5))
