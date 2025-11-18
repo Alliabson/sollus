@@ -4,7 +4,6 @@ import requests
 from datetime import datetime, date
 
 # Define a configuração da página
-# ISSO DEVE SER O PRIMEIRO COMANDO STREAMLIT
 st.set_page_config(layout="wide", page_title="Aplicação Financeira")
 
 # --- Funções Helper ---
@@ -24,25 +23,18 @@ def get_status(row):
     """
     Calcula o status de um título (A vencer, Vence hoje, Vencido, Baixado).
     """
-    # 1. Verifica se foi pago (Baixado)
     if pd.notna(row.get('dataBaixa')) or pd.notna(row.get('dataCredito')):
         return "Baixado"
     
-    # 2. Obtém o valor da data de vencimento (já normalizado no código principal)
     dt_venc = row.get('dataVencimentoReal')
     
-    # 3. Verifica se é NaT
     if pd.isna(dt_venc):
         return "A vencer"
 
     try:
-        # 4. Normaliza as datas para comparação
         today = pd.Timestamp.now().normalize()
-        
-        # Garante que dt_venc é timestamp e remove info de timezone se houver (fallback)
         vencimento = pd.to_datetime(dt_venc).tz_localize(None).normalize()
         
-        # 5. Compara as datas
         if vencimento == today:
             return "Vence hoje"
         elif vencimento < today:
@@ -76,6 +68,7 @@ st.markdown("""
         border: none;
         border-radius: 5px;
     }
+    /* Títulos dos sub-cabeçalhos (Filtros, Extratos, Saldo) */
     h3 {
         color: #FFFFFF;
         background-color: #4CAF50;
@@ -83,6 +76,7 @@ st.markdown("""
         border-radius: 5px;
         text-align: center;
     }
+    /* Styling dos cartões KPI (Métricas) */
     [data-testid="stMetric"] {
         background-color: #FAFAFA;
         border: 1px solid #E0E0E0;
@@ -100,12 +94,14 @@ st.markdown("""
         color: #333333 !important; 
         background-color: transparent !important; 
     }
+    /* Cabeçalho das tabelas (DataFrames) */
     .stDataFrame th {
         background-color: #E8F5E9;
         font-size: 1.1em;
         font-weight: bold;
         color: #333333;
     }
+    /* COR DA FONTE DA TABELA - Light/Dark Mode */
     .stDataFrame td {
         color: #333333 !important;
     }
@@ -119,6 +115,7 @@ st.markdown("""
         .stDataFrame td { color: #DDDDDD !important; }
         .extratos-table-container .extratos-table td { color: #333333 !important; }
     }
+    /* Estilos para a tabela de extratos HTML */
     .extratos-table-container {
         height: 400px;
         overflow-y: auto;
@@ -153,8 +150,6 @@ st.markdown("""
 def load_movimentos_e_saldos(api_token):
     try:
         headers = {"Authorization": f"Bearer {api_token}"}
-        
-        # 1. Movimentos
         url_movimentos = "https://api.flow2.com.br/v1/movimentosBancarios?DesabilitarPaginacao=true&DataMovimentoMaiorOuIgualA=2025-01-01"
         response_mov = requests.get(url_movimentos, headers=headers)
         response_mov.raise_for_status()
@@ -180,7 +175,6 @@ def load_movimentos_e_saldos(api_token):
         df_movimentos['Horario'] = df_movimentos['DataMovimento'].dt.time
         df_movimentos['Descricao'] = df_movimentos.get('Descricao', '').astype(str).str.upper()
 
-        # 2. Saldos
         url_saldos = "https://api.flow2.com.br/v1/saldoBancos"
         response_saldos = requests.get(url_saldos, headers=headers)
         response_saldos.raise_for_status()
@@ -272,6 +266,7 @@ except KeyError:
 
 tab_bancario, tab_receber = st.tabs(["🏦 Controle Bancário", "🧾 Contas a Receber"])
 
+
 # --- ABA 1: CONTROLE BANCÁRIO ---
 with tab_bancario:
     df_movimentos, df_saldos = load_movimentos_e_saldos(api_token)
@@ -353,6 +348,7 @@ with tab_bancario:
             df_saldos_display['Saldo dos bancos'] = df_saldos_display['Saldo dos bancos'].apply(format_brl)
             st.dataframe(df_saldos_display, use_container_width=True, hide_index=True, height=400)
 
+
 # --- ABA 2: CONTAS A RECEBER ---
 with tab_receber:
     
@@ -365,34 +361,29 @@ with tab_receber:
             # --- Preparação e Limpeza de Dados (Contas a Receber) ---
             df_receber = df_receber_raw.copy()
             
-            # --- CORREÇÃO DO ERRO DE DATAS E TIMEZONE (IDs 264, 342) ---
-            
-            # 1. Garante conversão para datetime com UTC=True para lidar com strings como "T01:00:00-03:00"
+            # --- CORREÇÃO DO ERRO DE DATAS E TIMEZONE ---
             df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber.get('dataVencimentoReal'), utc=True, errors='coerce')
-            
-            # 2. Remove a informação de fuso horário (converte para timezone-naive)
-            # Isso unifica "2025-01-01 01:00:00+00:00" e "2025-01-01 00:00:00" para o mesmo tipo
             df_receber['dataVencimentoReal'] = df_receber['dataVencimentoReal'].dt.tz_localize(None)
-
-            # 3. Normaliza para meia-noite (remove horas, minutos, segundos) mantendo formato Timestamp
             df_receber['dataVencimentoReal'] = df_receber['dataVencimentoReal'].dt.normalize()
 
-            # Tratamento das outras datas
             df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa'), errors='coerce')
             df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito'), errors='coerce')
             
             df_receber['situacao'] = df_receber.get('situacao', 'Indefinido')
-            df_receber['Valor'] = pd.to_numeric(df_receber.get('valorAReceberParcela', 0), errors='coerce').fillna(0).abs()
             
-            # Colunas auxiliares para exibição (dt.date cria objeto date, não Timestamp)
+            # --- CORREÇÃO: Usando 'valorBruto' conforme solicitado ---
+            # Assume-se que 'valorBruto' é o valor correto para a parcela
+            df_receber['Valor'] = pd.to_numeric(df_receber.get('valorBruto', 0), errors='coerce').fillna(0).abs()
+            # --- FIM DA CORREÇÃO DE VALOR ---
+            
+            # Garante que não há linhas duplicadas (para o problema de 2 vs 3 linhas)
+            df_receber.drop_duplicates(subset=['id', 'parcela'], keep='first', inplace=True)
+            
             df_receber['Vencimento_Display'] = df_receber['dataVencimentoReal'].dt.date
             df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date 
             
-            # Aplica o cálculo de status
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
             df_receber['Projeto'] = df_receber.get('codigoProjeto', 'N/A')
-
-            # --- Fim da Preparação ---
 
             # --- Filtros ---
             st.subheader("Filtros de Contas a Receber")
@@ -403,15 +394,12 @@ with tab_receber:
                 selected_status = st.multiselect("Status (Calculado)", options=status_options, default=status_options, key="selected_status")
 
             with col2_cr:
-                # Usa a coluna normalizada (Timestamp) para pegar min/max, mas exibe como data
                 min_date_cr = df_receber['dataVencimentoReal'].min()
                 max_date_cr = df_receber['dataVencimentoReal'].max()
 
-                # Fallback se min/max forem NaT
                 if pd.isna(min_date_cr): min_date_cr = pd.Timestamp.now().normalize()
                 if pd.isna(max_date_cr): max_date_cr = pd.Timestamp.now().normalize()
 
-                # Converte para .date() para o widget do Streamlit
                 date_range_cr = st.date_input(
                     "Período de Vencimento",
                     [min_date_cr.date(), max_date_cr.date()],
@@ -427,24 +415,23 @@ with tab_receber:
                     end_date_filter_cr = date_range_cr[1]
 
             # --- Aplicação dos Filtros ---
-            
-            # Converte os inputs do filtro (date) para Timestamp (datetime64) para comparar com o DataFrame
             start_ts = pd.Timestamp(start_date_filter_cr)
             end_ts = pd.Timestamp(end_date_filter_cr) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
 
-            # Filtragem Robusta (Timestamp vs Timestamp)
+            # 1. Filtro de Data
             kpi_df = df_receber[
                 (df_receber['dataVencimentoReal'].notna()) & 
                 (df_receber['dataVencimentoReal'] >= start_ts) &
                 (df_receber['dataVencimentoReal'] <= end_ts)
             ].copy()
             
+            # 2. Filtro de Status
             df_receber_filtered = kpi_df[kpi_df['Status'].isin(selected_status)].copy()
 
             # --- KPIs ---
             st.divider()
-            total_a_receber = kpi_df[kpi_df['Status'] != 'Baixado']['Valor'].sum()
-            total_vencido = kpi_df[kpi_df['Status'] == 'Vencido']['Valor'].sum()
+            total_a_receber = df_receber_filtered[df_receber_filtered['Status'] != 'Baixado']['Valor'].sum()
+            total_vencido = df_receber_filtered[df_receber_filtered['Status'] == 'Vencido']['Valor'].sum()
             
             today_date = date.today()
             df_recebido_mes = df_receber[
@@ -455,6 +442,7 @@ with tab_receber:
             total_recebido_mes = df_recebido_mes['Valor'].sum()
 
             kpi1_cr, kpi2_cr, kpi3_cr = st.columns(3)
+            # KPI Total a Receber agora usa df_receber_filtered para refletir o filtro de status
             kpi1_cr.metric("Total a Receber (no período)", format_brl(total_a_receber))
             kpi2_cr.metric("Total Vencido (no período)", format_brl(total_vencido))
             kpi3_cr.metric("Total Recebido (Este Mês)", format_brl(total_recebido_mes))
@@ -462,9 +450,9 @@ with tab_receber:
             # --- Tabela ---
             st.subheader("Detalhe de Contas a Receber")
             df_receber_display = df_receber_filtered.copy()
-            df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
             
-            # Usa a coluna Vencimento_Display (que é .date object) para formatar string
+            # Formatação final
+            df_receber_display['Valor Parcela'] = df_receber_display['Valor'].apply(format_brl)
             df_receber_display['Vencimento'] = df_receber_display['Vencimento_Display'].apply(
                 lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
             )
@@ -472,9 +460,17 @@ with tab_receber:
                 lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
             )
             
+            # Renomeia a coluna 'Projeto' para 'Nº projeto' (para corresponder ao Print 1)
+            df_receber_display.rename(columns={'Projeto': 'Nº projeto'}, inplace=True)
+            
             st.dataframe(
                 df_receber_display[[
-                    'Cliente', 'Projeto', 'Vencimento', 'Recebido em', 'Status', 'Valor Parcela'
+                    'Cliente',
+                    'Nº projeto',
+                    'Vencimento',
+                    'Recebido em',
+                    'Status',
+                    'Valor Parcela'
                 ]],
                 use_container_width=True,
                 hide_index=True,
@@ -486,6 +482,4 @@ with tab_receber:
 
         except Exception as e:
             st.error(f"Erro ao processar dados de Contas a Receber: {e}")
-            st.write("Detalhe do erro:")
-            st.write(e)
             st.dataframe(df_receber_raw.head(5))
