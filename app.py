@@ -152,7 +152,7 @@ st.markdown("""
         border-radius: 5px;
     }
     .extratos-table {
-        width: 1(!00%;
+        width: 100%;
         border-collapse: collapse;
     }
     .extratos-table th {
@@ -222,7 +222,7 @@ def load_movimentos_e_saldos(api_token):
         if 'Operacao' in df_movimentos.columns:
             df_movimentos['Operacao'] = df_movimentos['Operacao'].astype(str)
         
-        df_movimentos['Valor'] = pd.to_numeric(df_movimentos.get('Valor', 0))
+        df_movimentos['Valor'] = pd.to_numeric(df_movimentos.get('Valor', 0), errors='coerce')
         df_movimentos['DataMovimento'] = pd.to_datetime(df_movimentos.get('DataMovimento', None), errors='coerce')
         
         df_movimentos['Data'] = df_movimentos['DataMovimento'].dt.date
@@ -249,7 +249,7 @@ def load_movimentos_e_saldos(api_token):
             "saldo": "Saldo dos bancos"
         })
         
-        df_saldos['Saldo dos bancos'] = pd.to_numeric(df_saldos.get('Saldo dos bancos', 0))
+        df_saldos['Saldo dos bancos'] = pd.to_numeric(df_saldos.get('Saldo dos bancos', 0), errors='coerce')
         
         # Garante que as colunas principais existem
         df_movimentos = df_movimentos.reindex(columns=['Data', 'Horario', 'Descricao', 'Valor', 'Operacao', 'Banco'])
@@ -261,7 +261,7 @@ def load_movimentos_e_saldos(api_token):
         st.error(f"Erro ao carregar dados da API (Mov/Saldos): {e}")
         return None, None
     except Exception as e:
-        st.error(f"Erro ao processar os dados (Mov/SSaldOS): {e}")
+        st.error(f"Erro ao processar os dados (Mov/Saldos): {e}")
         return None, None
 
 @st.cache_data(ttl=600) # Cache de 10 minutos
@@ -518,15 +518,36 @@ with tab_receber:
             # --- Preparação e Limpeza de Dados (Contas a Receber) ---
             df_receber = df_receber_raw.copy()
             
-            # 1. TRATAMENTO DA DATA DE VENCIMENTO (USANDO NOMINAL E NORMALIZANDO FORMATO)
-            # PEGA O VALOR DE dataVencimentoNominal (se existir), ou string vazia (se NaT/float)
-            data_nominal = df_receber.get('dataVencimentoNominal', df_receber.get('dataVencimentoReal', '')).astype(str)
+            # 1. TRATAMENTO DA DATA DE VENCIMENTO - VERSÃO CORRIGIDA
+            def get_vencimento_final(row):
+                # Tenta dataVencimentoNominal primeiro
+                nominal = row.get('dataVencimentoNominal')
+                if pd.notna(nominal) and nominal != '':
+                    return nominal
+                
+                # Fallback para dataVencimentoReal
+                real = row.get('dataVencimentoReal')
+                if pd.notna(real) and real != '':
+                    return real
+                
+                # Se ambos forem inválidos, retorna NaT
+                return pd.NaT
             
-            # Converte, trata o timezone e normaliza (resolve problemas de T01:00:00-03:00)
-            df_receber['dataVencimentoReal'] = pd.to_datetime(data_nominal, utc=True, errors='coerce')
+            # Aplica a função para criar a coluna de vencimento final
+            df_receber['dataVencimentoFinal'] = df_receber.apply(get_vencimento_final, axis=1)
+            
+            # Converte para datetime com tratamento robusto
+            df_receber['dataVencimentoReal'] = pd.to_datetime(
+                df_receber['dataVencimentoFinal'], 
+                utc=True, 
+                errors='coerce'
+            )
             df_receber['dataVencimentoReal'] = df_receber['dataVencimentoReal'].dt.tz_localize(None)
             df_receber['dataVencimentoReal'] = df_receber['dataVencimentoReal'].dt.normalize()
-            # --- FIM DO TRATAMENTO DE DATA ---
+            
+            # Remove a coluna temporária
+            df_receber = df_receber.drop('dataVencimentoFinal', axis=1)
+            # --- FIM DO TRATAMENTO DE DATA CORRIGIDO ---
             
             # Demais Datas
             df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa', None), errors='coerce')
