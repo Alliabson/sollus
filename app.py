@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, date
+import re
 
 # Define a configuração da página
 st.set_page_config(layout="wide", page_title="Aplicação Financeira")
@@ -46,6 +47,28 @@ def format_brl(value):
         return f"R$ {formatted_br}"
     except (ValueError, TypeError):
         return "R$ 0,00"
+
+def corrigir_fuso_horario(data_str):
+    """
+    Corrige o fuso horário das datas ISO 8601.
+    Converte '2025-10-16T01:00:00-03:00' para '2025-10-16T00:00:00'
+    """
+    if pd.isna(data_str) or data_str == '':
+        return data_str
+    
+    data_str = str(data_str)
+    
+    # Se já é uma data válida sem fuso, retorna como está
+    if not 'T' in data_str:
+        return data_str
+    
+    try:
+        # Extrai apenas a parte da data (antes do T)
+        data_parte = data_str.split('T')[0]
+        # Retorna no formato correto sem fuso horário
+        return f"{data_parte}T00:00:00"
+    except:
+        return data_str
 
 def get_status(row):
     """
@@ -426,28 +449,41 @@ with tab_receber:
         st.info("📭 Nenhuma conta a receber encontrada")
     else:
         try:
-            # Preprocessamento dos dados
+            # Preprocessamento dos dados COM CORREÇÃO DE FUSO
             df_receber = df_receber_raw.copy()
+            
+            # CORREÇÃO DO FUSO HORÁRIO - APLICAR EM TODAS AS COLUNAS DE DATA
+            colunas_data = ['dataVencimentoNominal', 'dataVencimentoReal', 'dataBaixa', 'dataCredito']
+            
+            for coluna in colunas_data:
+                if coluna in df_receber.columns:
+                    # Aplica correção de fuso horário
+                    df_receber[coluna] = df_receber[coluna].apply(corrigir_fuso_horario)
             
             # TRATAMENTO ROBUSTO DE DATAS
             def get_data_vencimento(row):
-                # Tenta dataVencimentoNominal primeiro
+                # Tenta dataVencimentoNominal primeiro (já corrigida)
                 nominal = row.get('dataVencimentoNominal')
-                if pd.notna(nominal) and nominal != '':
+                if pd.notna(nominal) and nominal != '' and nominal != 'NaT':
                     return nominal
-                # Fallback para dataVencimentoReal
+                # Fallback para dataVencimentoReal (já corrigida)
                 real = row.get('dataVencimentoReal')
-                if pd.notna(real) and real != '':
+                if pd.notna(real) and real != '' and real != 'NaT':
                     return real
                 return pd.NaT
             
             df_receber['dataVencimentoFinal'] = df_receber.apply(get_data_vencimento, axis=1)
-            df_receber['dataVencimentoReal'] = pd.to_datetime(df_receber['dataVencimentoFinal'], errors='coerce')
-            df_receber = df_receber.drop('dataVencimentoFinal', axis=1)
             
-            # Outras datas
-            df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa'), errors='coerce')
-            df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito'), errors='coerce')
+            # Converter para datetime - AGORA SEM PROBLEMAS DE FUSO
+            df_receber['dataVencimentoReal'] = pd.to_datetime(
+                df_receber['dataVencimentoFinal'], 
+                errors='coerce',
+                utc=False  # Não usar UTC para evitar problemas de fuso
+            )
+            
+            # Outras datas (já corrigidas do fuso)
+            df_receber['dataBaixa'] = pd.to_datetime(df_receber.get('dataBaixa'), errors='coerce', utc=False)
+            df_receber['dataCredito'] = pd.to_datetime(df_receber.get('dataCredito'), errors='coerce', utc=False)
             
             # Valor
             df_receber['Valor'] = pd.to_numeric(df_receber.get('valorBruto', 0), errors='coerce').fillna(0).abs()
@@ -455,25 +491,18 @@ with tab_receber:
             # Status
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
             
-            # Colunas de exibição - TRATAMENTO CORRIGIDO
-            if 'dataVencimentoReal' in df_receber.columns:
-                df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
-                # Garantir que não há valores float/NaN na coluna de data
-                df_receber['Vencimento'] = df_receber['Vencimento'].apply(
-                    lambda x: x if isinstance(x, date) else pd.NaT
-                )
-            else:
-                df_receber['Vencimento'] = pd.NaT
-                
-            if 'dataBaixa' in df_receber.columns:
-                df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date
-                df_receber['Recebido em'] = df_receber['Recebido em'].apply(
-                    lambda x: x if isinstance(x, date) else pd.NaT
-                )
-            else:
-                df_receber['Recebido em'] = pd.NaT
-                
+            # Colunas de exibição - TRATAMENTO SIMPLIFICADO
+            df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
+            df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date
             df_receber['Nº projeto'] = df_receber.get('codigoProjeto', 'N/A')
+            
+            # Limpeza final - garantir que não há NaT nas colunas de exibição
+            df_receber['Vencimento'] = df_receber['Vencimento'].apply(
+                lambda x: x if not pd.isna(x) else None
+            )
+            df_receber['Recebido em'] = df_receber['Recebido em'].apply(
+                lambda x: x if not pd.isna(x) else None
+            )
             
         except Exception as e:
             st.error(f"❌ Erro no processamento dos dados: {e}")
@@ -481,7 +510,7 @@ with tab_receber:
             st.dataframe(df_receber_raw.head(10))
             st.stop()
 
-        # Filtros - COM VERIFICAÇÃO DE SEGURANÇA
+        # Filtros
         st.subheader("🔧 Filtros")
         col1, col2 = st.columns(2)
 
@@ -499,15 +528,14 @@ with tab_receber:
                 st.warning("Coluna 'Status' não encontrada")
 
         with col2:
-            # Filtro de datas com tratamento robusto
+            # Filtro de datas
             min_venc = date.today()
             max_venc = date.today()
             
             if 'Vencimento' in df_receber.columns:
                 try:
-                    # Filtrar apenas valores que são realmente datas
+                    # Filtrar apenas valores válidos (não nulos)
                     datas_validas = df_receber['Vencimento'].dropna()
-                    datas_validas = datas_validas[datas_validas.apply(lambda x: isinstance(x, date))]
                     
                     if not datas_validas.empty:
                         min_venc = datas_validas.min()
@@ -527,7 +555,7 @@ with tab_receber:
                 key="tab2_date"
             )
 
-        # Aplicar filtros com segurança
+        # Aplicar filtros
         df_filtrado = df_receber.copy()
         
         if 'Status' in df_receber.columns and status_selecionados:
@@ -535,36 +563,29 @@ with tab_receber:
             
         if 'Vencimento' in df_receber.columns:
             try:
-                # Filtro seguro para datas - apenas linhas com datas válidas
+                # Filtro seguro para datas
                 df_filtrado = df_filtrado[
-                    df_filtrado['Vencimento'].apply(lambda x: isinstance(x, date)) &
+                    (df_filtrado['Vencimento'].notna()) &
                     (df_filtrado['Vencimento'] >= periodo[0]) &
                     (df_filtrado['Vencimento'] <= periodo[1])
                 ]
             except Exception as e:
                 st.error(f"Erro ao filtrar por data: {e}")
-                # Se der erro, mostra todas as linhas
-                df_filtrado = df_filtrado
 
         # KPIs
         st.divider()
         st.subheader("📈 Métricas")
 
-        total_receber = 0
-        total_vencido = 0
-        recebido_mes = 0
-
-        if 'Status' in df_filtrado.columns and 'Valor' in df_filtrado.columns:
-            total_receber = df_filtrado[df_filtrado['Status'] != 'Baixado']['Valor'].sum()
-            total_vencido = df_filtrado[df_filtrado['Status'] == 'Vencido']['Valor'].sum()
+        total_receber = df_filtrado[df_filtrado['Status'] != 'Baixado']['Valor'].sum() if 'Status' in df_filtrado.columns else 0
+        total_vencido = df_filtrado[df_filtrado['Status'] == 'Vencido']['Valor'].sum() if 'Status' in df_filtrado.columns else 0
         
         # Recebido este mês (ignora filtros)
+        recebido_mes = 0
         if 'Recebido em' in df_receber.columns and 'Valor' in df_receber.columns:
             hoje = date.today()
             try:
-                # Filtro seguro para datas de recebimento
                 recebido_mes_df = df_receber[
-                    df_receber['Recebido em'].apply(lambda x: isinstance(x, date)) &
+                    (df_receber['Recebido em'].notna()) &
                     (df_receber['Recebido em'] >= date(hoje.year, hoje.month, 1)) &
                     (df_receber['Recebido em'] <= hoje)
                 ]
@@ -577,7 +598,7 @@ with tab_receber:
         col2.metric("⚠️ Vencido", format_brl(total_vencido))
         col3.metric("✅ Recebido Mês", format_brl(recebido_mes))
 
-        # Tabela principal
+        # Tabela principal - FORMATAÇÃO SEGURA
         st.divider()
         st.subheader("📋 Detalhe de Contas a Receber")
         
@@ -587,19 +608,20 @@ with tab_receber:
         if colunas_disponiveis:
             df_display = df_filtrado[colunas_disponiveis].copy()
             
-            # Formatar colunas
+            # Formatar colunas - MÉTODO SEGURO
             if 'Valor' in df_display.columns:
-                df_display['Valor'] = df_display['Valor'].apply(format_brl)
-                df_display = df_display.rename(columns={'Valor': 'Valor Parcela'})
+                df_display['Valor Parcela'] = df_display['Valor'].apply(format_brl)
+                df_display = df_display.drop('Valor', axis=1)
             
+            # Formatação segura de datas
             if 'Vencimento' in df_display.columns:
                 df_display['Vencimento'] = df_display['Vencimento'].apply(
-                    lambda x: x.strftime('%d/%m/%Y') if isinstance(x, date) else ''
+                    lambda x: x.strftime('%d/%m/%Y') if x and not pd.isna(x) else ''
                 )
             
             if 'Recebido em' in df_display.columns:
                 df_display['Recebido em'] = df_display['Recebido em'].apply(
-                    lambda x: x.strftime('%d/%m/%Y') if isinstance(x, date) else ''
+                    lambda x: x.strftime('%d/%m/%Y') if x and not pd.isna(x) else ''
                 )
             
             st.dataframe(df_display, use_container_width=True, height=400)
@@ -608,8 +630,6 @@ with tab_receber:
             st.info(f"📊 Mostrando {len(df_display)} de {len(df_receber)} registros")
         else:
             st.warning("Nenhuma coluna disponível para exibição")
-            st.info("Colunas disponíveis no DataFrame:")
-            st.write(list(df_filtrado.columns))
 
         # Dados brutos para debug
         with st.expander("🔍 Dados Brutos (Primeiros 10)"):
