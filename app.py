@@ -455,9 +455,17 @@ with tab_receber:
             # Status
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
             
-            # Colunas de exibição
-            df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
-            df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date
+            # Colunas de exibição - VERIFICAÇÃO SEGURA
+            if 'dataVencimentoReal' in df_receber.columns:
+                df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
+            else:
+                df_receber['Vencimento'] = pd.NaT
+                
+            if 'dataBaixa' in df_receber.columns:
+                df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date
+            else:
+                df_receber['Recebido em'] = pd.NaT
+                
             df_receber['Nº projeto'] = df_receber.get('codigoProjeto', 'N/A')
             
         except Exception as e:
@@ -466,56 +474,86 @@ with tab_receber:
             st.dataframe(df_receber_raw.head(10))
             st.stop()
 
-        # Filtros
+        # Filtros - COM VERIFICAÇÃO DE SEGURANÇA
         st.subheader("🔧 Filtros")
         col1, col2 = st.columns(2)
 
         with col1:
-            status_opcoes = df_receber['Status'].unique().tolist()
-            status_selecionados = st.multiselect(
-                "📊 Status", 
-                status_opcoes, 
-                default=status_opcoes,
-                key="tab2_status"
-            )
+            if 'Status' in df_receber.columns:
+                status_opcoes = df_receber['Status'].unique().tolist()
+                status_selecionados = st.multiselect(
+                    "📊 Status", 
+                    status_opcoes, 
+                    default=status_opcoes,
+                    key="tab2_status"
+                )
+            else:
+                status_selecionados = []
+                st.warning("Coluna 'Status' não encontrada")
 
         with col2:
             if 'Vencimento' in df_receber.columns:
-                min_venc = df_receber['Vencimento'].min()
-                max_venc = df_receber['Vencimento'].max()
-                if pd.isna(min_venc): min_venc = date.today()
-                if pd.isna(max_venc): max_venc = date.today()
-                periodo = st.date_input(
-                    "📅 Período Vencimento", 
-                    [min_venc, max_venc], 
-                    key="tab2_date"
-                )
+                # Filtro seguro para datas
+                try:
+                    min_venc = df_receber['Vencimento'].min()
+                    max_venc = df_receber['Vencimento'].max()
+                    if pd.isna(min_venc): 
+                        min_venc = date.today()
+                    if pd.isna(max_venc): 
+                        max_venc = date.today()
+                    
+                    periodo = st.date_input(
+                        "📅 Período Vencimento", 
+                        [min_venc, max_venc], 
+                        key="tab2_date"
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao processar datas: {e}")
+                    periodo = [date.today(), date.today()]
             else:
                 periodo = [date.today(), date.today()]
+                st.warning("Coluna 'Vencimento' não encontrada")
 
-        # Aplicar filtros
-        if 'Status' in df_receber.columns and 'Vencimento' in df_receber.columns:
-            df_filtrado = df_receber[
-                (df_receber['Status'].isin(status_selecionados)) &
-                (df_receber['Vencimento'].between(periodo[0], periodo[1]))
-            ]
-        else:
-            df_filtrado = df_receber
+        # Aplicar filtros com segurança
+        df_filtrado = df_receber.copy()
+        
+        if 'Status' in df_receber.columns and status_selecionados:
+            df_filtrado = df_filtrado[df_filtrado['Status'].isin(status_selecionados)]
+            
+        if 'Vencimento' in df_receber.columns:
+            try:
+                df_filtrado = df_filtrado[
+                    (df_filtrado['Vencimento'].notna()) &
+                    (df_filtrado['Vencimento'] >= periodo[0]) &
+                    (df_filtrado['Vencimento'] <= periodo[1])
+                ]
+            except Exception as e:
+                st.error(f"Erro ao filtrar por data: {e}")
 
         # KPIs
         st.divider()
         st.subheader("📈 Métricas")
 
-        total_receber = df_filtrado[df_filtrado['Status'] != 'Baixado']['Valor'].sum() if 'Status' in df_filtrado.columns else 0
-        total_vencido = df_filtrado[df_filtrado['Status'] == 'Vencido']['Valor'].sum() if 'Status' in df_filtrado.columns else 0
+        total_receber = 0
+        total_vencido = 0
+        recebido_mes = 0
+
+        if 'Status' in df_filtrado.columns and 'Valor' in df_filtrado.columns:
+            total_receber = df_filtrado[df_filtrado['Status'] != 'Baixado']['Valor'].sum()
+            total_vencido = df_filtrado[df_filtrado['Status'] == 'Vencido']['Valor'].sum()
         
         # Recebido este mês (ignora filtros)
-        hoje = date.today()
-        recebido_mes = df_receber[
-            (df_receber['Recebido em'].notna()) &
-            (df_receber['Recebido em'] >= date(hoje.year, hoje.month, 1)) &
-            (df_receber['Recebido em'] <= hoje)
-        ]['Valor'].sum() if 'Recebido em' in df_receber.columns else 0
+        if 'Recebido em' in df_receber.columns and 'Valor' in df_receber.columns:
+            hoje = date.today()
+            try:
+                recebido_mes_df = df_receber[
+                    (df_receber['Recebido em'].notna()) &
+                    (df_receber['Recebido em'] >= date(hoje.year, hoje.month, 1)) &
+                    (df_receber['Recebido em'] <= hoje)
+                ]
+                recebido_mes = recebido_mes_df['Valor'].sum()
+            except Exception:
+                recebido_mes = 0
 
         col1, col2, col3 = st.columns(3)
         col1.metric("💰 A Receber", format_brl(total_receber))
@@ -553,6 +591,8 @@ with tab_receber:
             st.info(f"📊 Mostrando {len(df_display)} de {len(df_receber)} registros")
         else:
             st.warning("Nenhuma coluna disponível para exibição")
+            st.info("Colunas disponíveis no DataFrame:")
+            st.write(list(df_filtrado.columns))
 
         # Dados brutos para debug
         with st.expander("🔍 Dados Brutos (Primeiros 10)"):
