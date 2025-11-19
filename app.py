@@ -455,14 +455,21 @@ with tab_receber:
             # Status
             df_receber['Status'] = df_receber.apply(get_status, axis=1)
             
-            # Colunas de exibição - VERIFICAÇÃO SEGURA
+            # Colunas de exibição - TRATAMENTO CORRIGIDO
             if 'dataVencimentoReal' in df_receber.columns:
                 df_receber['Vencimento'] = df_receber['dataVencimentoReal'].dt.date
+                # Garantir que não há valores float/NaN na coluna de data
+                df_receber['Vencimento'] = df_receber['Vencimento'].apply(
+                    lambda x: x if isinstance(x, date) else pd.NaT
+                )
             else:
                 df_receber['Vencimento'] = pd.NaT
                 
             if 'dataBaixa' in df_receber.columns:
                 df_receber['Recebido em'] = df_receber['dataBaixa'].dt.date
+                df_receber['Recebido em'] = df_receber['Recebido em'].apply(
+                    lambda x: x if isinstance(x, date) else pd.NaT
+                )
             else:
                 df_receber['Recebido em'] = pd.NaT
                 
@@ -492,27 +499,33 @@ with tab_receber:
                 st.warning("Coluna 'Status' não encontrada")
 
         with col2:
+            # Filtro de datas com tratamento robusto
+            min_venc = date.today()
+            max_venc = date.today()
+            
             if 'Vencimento' in df_receber.columns:
-                # Filtro seguro para datas
                 try:
-                    min_venc = df_receber['Vencimento'].min()
-                    max_venc = df_receber['Vencimento'].max()
-                    if pd.isna(min_venc): 
-                        min_venc = date.today()
-                    if pd.isna(max_venc): 
-                        max_venc = date.today()
+                    # Filtrar apenas valores que são realmente datas
+                    datas_validas = df_receber['Vencimento'].dropna()
+                    datas_validas = datas_validas[datas_validas.apply(lambda x: isinstance(x, date))]
                     
-                    periodo = st.date_input(
-                        "📅 Período Vencimento", 
-                        [min_venc, max_venc], 
-                        key="tab2_date"
-                    )
+                    if not datas_validas.empty:
+                        min_venc = datas_validas.min()
+                        max_venc = datas_validas.max()
+                    else:
+                        min_venc = date.today()
+                        max_venc = date.today()
+                        
                 except Exception as e:
                     st.error(f"Erro ao processar datas: {e}")
-                    periodo = [date.today(), date.today()]
-            else:
-                periodo = [date.today(), date.today()]
-                st.warning("Coluna 'Vencimento' não encontrada")
+                    min_venc = date.today()
+                    max_venc = date.today()
+            
+            periodo = st.date_input(
+                "📅 Período Vencimento", 
+                [min_venc, max_venc], 
+                key="tab2_date"
+            )
 
         # Aplicar filtros com segurança
         df_filtrado = df_receber.copy()
@@ -522,13 +535,16 @@ with tab_receber:
             
         if 'Vencimento' in df_receber.columns:
             try:
+                # Filtro seguro para datas - apenas linhas com datas válidas
                 df_filtrado = df_filtrado[
-                    (df_filtrado['Vencimento'].notna()) &
+                    df_filtrado['Vencimento'].apply(lambda x: isinstance(x, date)) &
                     (df_filtrado['Vencimento'] >= periodo[0]) &
                     (df_filtrado['Vencimento'] <= periodo[1])
                 ]
             except Exception as e:
                 st.error(f"Erro ao filtrar por data: {e}")
+                # Se der erro, mostra todas as linhas
+                df_filtrado = df_filtrado
 
         # KPIs
         st.divider()
@@ -546,8 +562,9 @@ with tab_receber:
         if 'Recebido em' in df_receber.columns and 'Valor' in df_receber.columns:
             hoje = date.today()
             try:
+                # Filtro seguro para datas de recebimento
                 recebido_mes_df = df_receber[
-                    (df_receber['Recebido em'].notna()) &
+                    df_receber['Recebido em'].apply(lambda x: isinstance(x, date)) &
                     (df_receber['Recebido em'] >= date(hoje.year, hoje.month, 1)) &
                     (df_receber['Recebido em'] <= hoje)
                 ]
@@ -577,12 +594,12 @@ with tab_receber:
             
             if 'Vencimento' in df_display.columns:
                 df_display['Vencimento'] = df_display['Vencimento'].apply(
-                    lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
+                    lambda x: x.strftime('%d/%m/%Y') if isinstance(x, date) else ''
                 )
             
             if 'Recebido em' in df_display.columns:
                 df_display['Recebido em'] = df_display['Recebido em'].apply(
-                    lambda x: x.strftime('%d/%m/%Y') if pd.notna(x) else ''
+                    lambda x: x.strftime('%d/%m/%Y') if isinstance(x, date) else ''
                 )
             
             st.dataframe(df_display, use_container_width=True, height=400)
